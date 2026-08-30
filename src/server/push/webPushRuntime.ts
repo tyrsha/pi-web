@@ -49,6 +49,10 @@ export function createWebPushRuntime(options: {
   /** Structural seam satisfied by SessionEventHub.subscribe — keeps this module hub-agnostic for tests. */
   readonly eventHub: import("./webPushNotifier.js").PushEventSource;
   readonly logger: FastifyBaseLogger;
+  /** Best-effort session cwd lookup for notification deep-link routes (see WebPushNotifierOptions.resolveCwd). */
+  readonly resolveSessionCwd?: ((sessionId: string) => string | undefined) | undefined;
+  /** Best-effort cwd → canonical route ids for deep links (see WebPushNotifierOptions.resolveDeepLink). */
+  readonly resolveDeepLink?: ((cwd: string) => Promise<import("./webPushNotifier.js").SessionDeepLinkTarget | undefined> | import("./webPushNotifier.js").SessionDeepLinkTarget | undefined) | undefined;
 }): WebPushRuntime {
   const push = options.config.push;
   if (!isCompleteVapidConfig(push)) {
@@ -71,6 +75,8 @@ export function createWebPushRuntime(options: {
       webPushModule.sendNotification(subscription, payload, { vapidDetails: { subject, publicKey, privateKey } }).then(() => undefined),
     {
       subscriptions: options.store,
+      resolveCwd: options.resolveSessionCwd,
+      resolveDeepLink: options.resolveDeepLink,
       onError: (message) => {
         // Delivery problems must be observable in daemon logs without affecting the realtime path.
         options.logger.warn(message);
