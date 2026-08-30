@@ -778,9 +778,13 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
               <p>
                 Notifications are sent from the session daemon on assistant message completions with visible text and on
                 session errors, with a short per-session cooldown so a burst of activity produces one notification. Each
-                browser stores one subscription per endpoint in <code>push-subscriptions.json</code> under the data
-                directory; endpoints the push service reports as expired are removed automatically. Tapping a
-                notification focuses or opens PI WEB and routes into the session that produced it.
+                new notification replaces the previous one from the same session, so a talkative agent leaves only its
+                latest notification. While a PI WEB window is visible on the device, pushes are not shown at all (the
+                app itself already reports what happened), and notifications that were already shown are closed when a
+                window comes back to the foreground. Each browser stores one subscription per endpoint in <code>push-subscriptions.json</code>
+                under the data directory; endpoints the push service reports as expired are removed automatically. Tapping a
+                notification focuses or opens PI WEB and routes into the session that produced it; an already-open
+                window switches to that session without reloading.
               </p>
               <div class="callout warning">
                 Web Push additionally requires the deployment to be served over HTTPS; deployments without HTTPS (or with

@@ -30,6 +30,24 @@ export interface WebPushNotifierOptions {
   readonly now?: (() => number) | undefined;
   /** Failure sink: delivery problems must be observable but never throw back into the hub publish path. */
   readonly onError?: ((message: string) => void) | undefined;
+  /**
+   * Session cwd lookup carried in the payload so the browser can resolve the notification into a
+   * full route (the client joins cwd against its workspace paths); best-effort: an undefined cwd
+   * degrades the deep link to app focus, exactly like the pre-cwd behavior.
+   */
+  readonly resolveCwd?: ((sessionId: string) => string | undefined) | undefined;
+  /**
+   * Canonical route ids for a cwd (project + main-workspace identity), computed daemon-side so the
+   * service worker can build the same deep link a browser link uses (`?project=&workspace=&session=&view=chat`)
+   * without client-side guessing. Best-effort: undefined falls back to the cwd join in the client.
+   */
+  readonly resolveDeepLink?: ((cwd: string) => Promise<SessionDeepLinkTarget | undefined> | SessionDeepLinkTarget | undefined) | undefined;
+}
+
+/** Project/workspace identity a notification deep link should route into. */
+export interface SessionDeepLinkTarget {
+  readonly projectId: string;
+  readonly workspaceId: string;
 }
 
 /**
@@ -43,6 +61,8 @@ export class WebPushNotifier {
   private readonly cooldownMs: number;
   private readonly now: () => number;
   private readonly onError: (message: string) => void;
+  private readonly resolveCwd: ((sessionId: string) => string | undefined) | undefined;
+  private readonly resolveDeepLink: ((cwd: string) => Promise<SessionDeepLinkTarget | undefined> | SessionDeepLinkTarget | undefined) | undefined;
   /** Bounded in practice by the session count of one daemon lifetime. */
   private lastSentAtBySession = new Map<string, number>();
 
@@ -51,6 +71,8 @@ export class WebPushNotifier {
     this.cooldownMs = options.cooldownMs ?? DEFAULT_PUSH_COOLDOWN_MS;
     this.now = options.now ?? Date.now;
     this.onError = options.onError ?? (() => undefined);
+    this.resolveCwd = options.resolveCwd;
+    this.resolveDeepLink = options.resolveDeepLink;
   }
 
   /** Subscribe this notifier to a session event source. Returns the unsubscribe function for teardown and tests. */
@@ -74,7 +96,16 @@ export class WebPushNotifier {
   }
 
   private async deliver(message: PushNotificationMessage, sessionId: string): Promise<void> {
-    const payload = JSON.stringify({ title: message.title, body: message.body, data: { kind: message.kind, sessionId } });
+    const cwd = this.resolveCwd?.(sessionId);
+    let deepLink: SessionDeepLinkTarget | undefined;
+    if (cwd !== undefined && this.resolveDeepLink !== undefined) {
+      try {
+        deepLink = await this.resolveDeepLink(cwd);
+      } catch {
+        deepLink = undefined; // A broken resolver must degrade the link, never block delivery.
+      }
+    }
+    const payload = JSON.stringify({ title: message.title, body: message.body, data: { kind: message.kind, sessionId, cwd, projectId: deepLink?.projectId, workspaceId: deepLink?.workspaceId } });
     const subscriptions = this.subscriptions.list();
     if (subscriptions.length === 0) return;
     // The map callback converts synchronous sender throws into rejections too: this notifier must never

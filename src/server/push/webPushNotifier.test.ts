@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SessionUiEvent } from "../../shared/apiTypes.js";
-import { DEFAULT_PUSH_COOLDOWN_MS, PUSH_NOTIFICATION_BODY_MAX_CHARS, WebPushNotifier, pushMessageForSessionEvent, truncateForPush, type PushSender } from "./webPushNotifier.js";
+import { DEFAULT_PUSH_COOLDOWN_MS, PUSH_NOTIFICATION_BODY_MAX_CHARS, WebPushNotifier, pushMessageForSessionEvent, truncateForPush, type PushSender, type SessionDeepLinkTarget } from "./webPushNotifier.js";
 
 function assistantMessage(text: string): unknown {
   return { role: "assistant", content: [{ type: "text", text }] };
@@ -33,7 +33,7 @@ interface Harness {
   store: FakeSubscriptionStore;
 }
 
-function createNotifier(send?: PushSender, options?: { cooldownMs?: number | undefined }): Harness {
+function createNotifier(send?: PushSender, options?: { cooldownMs?: number | undefined; resolveCwd?: ((sessionId: string) => string | undefined) | undefined; resolveDeepLink?: ((cwd: string) => Promise<SessionDeepLinkTarget | undefined> | SessionDeepLinkTarget | undefined) | undefined }): Harness {
   let clockValue = 0;
   const harnessErrors: string[] = [];
   const sentPayloads: { endpoint: string; payload: string }[] = [];
@@ -45,6 +45,8 @@ function createNotifier(send?: PushSender, options?: { cooldownMs?: number | und
   const notifier = new WebPushNotifier(send ?? defaultSend, {
     subscriptions: store,
     ...(options?.cooldownMs === undefined ? {} : { cooldownMs: options.cooldownMs }),
+    ...(options?.resolveCwd === undefined ? {} : { resolveCwd: options.resolveCwd }),
+    ...(options?.resolveDeepLink === undefined ? {} : { resolveDeepLink: options.resolveDeepLink }),
     now: () => clockValue,
     onError: (message) => harnessErrors.push(message),
   });
@@ -129,6 +131,31 @@ describe("WebPushNotifier", () => {
     await settle();
     expect(harness.sent).toHaveLength(1);
     expect(JSON.parse(harness.sent[0]?.payload ?? "{}")).toEqual({ title: "PI WEB", body: "final answer", data: { kind: "message", sessionId: "s1" } });
+  });
+
+  it("carries the session cwd in the payload so the browser can resolve the deep-link route", async () => {
+    const harness = createNotifier(undefined, { resolveCwd: (sessionId) => (sessionId === "s1" ? "/repo/app" : undefined) });
+    harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("done") });
+    await settle();
+    expect(JSON.parse(harness.sent[0]?.payload ?? "{}")).toEqual({ title: "PI WEB", body: "done", data: { kind: "message", sessionId: "s1", cwd: "/repo/app" } });
+  });
+
+  it("carries daemon-resolved canonical route ids so the service worker can link without a cwd join", async () => {
+    const resolveDeepLink = vi.fn((cwd: string): SessionDeepLinkTarget | undefined => (cwd === "/repo/app" ? { projectId: "p1", workspaceId: "w1id12345678" } : undefined));
+    const harness = createNotifier(undefined, { resolveCwd: () => "/repo/app", resolveDeepLink });
+    harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("done") });
+    await settle();
+    expect(resolveDeepLink).toHaveBeenCalledWith("/repo/app");
+    expect(JSON.parse(harness.sent[0]?.payload ?? "{}")).toEqual({ title: "PI WEB", body: "done", data: { kind: "message", sessionId: "s1", cwd: "/repo/app", projectId: "p1", workspaceId: "w1id12345678" } });
+  });
+
+  it("degrades to the cwd-only payload when the deep-link resolver fails", async () => {
+    const harness = createNotifier(undefined, { resolveCwd: () => "/repo/app", resolveDeepLink: () => Promise.reject(new Error("projects.json unreadable")) });
+    harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("done") });
+    await settle();
+    // The notification must still go out, exactly like a daemon without the resolver.
+    expect(harness.sent).toHaveLength(1);
+    expect(JSON.parse(harness.sent[0]?.payload ?? "{}")).toEqual({ title: "PI WEB", body: "done", data: { kind: "message", sessionId: "s1", cwd: "/repo/app" } });
   });
 
   it("coalesces bursts within the cooldown window per session but not across sessions", async () => {
