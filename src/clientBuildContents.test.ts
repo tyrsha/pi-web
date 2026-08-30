@@ -39,6 +39,10 @@ describe("production client build contents", () => {
       const serviceWorker = await readFile(join(outDir, "sw.js"), "utf8");
       expect(serviceWorker).toContain("skipWaiting");
       expect(serviceWorker).toContain("clients.claim()");
+      // Push substrate: render server-pushed notifications and deep-link clicks back into the session.
+      expect(serviceWorker).toContain('addEventListener("push"');
+      expect(serviceWorker).toContain("showNotification");
+      expect(serviceWorker).toContain('addEventListener("notificationclick"');
       // Intentionally minimal on fetches: the app streams live session data, so the worker must never intercept it.
       expect(serviceWorker).not.toContain('addEventListener("fetch"');
     } finally {
