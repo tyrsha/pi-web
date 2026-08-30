@@ -87,6 +87,7 @@
 <a href="#ui-settings">UI &amp; defaults</a>
 <a href="#file-settings">Files &amp; uploads</a>
 <a href="#session-tools">Session daemon</a>
+<a href="#web-push-notifications">Web push</a>
 <a href="#plugin-config">Plugins</a>
 <a href="#network">Networking</a>
 <a href="#storage">Storage</a>
@@ -377,6 +378,10 @@
 </tbody></table></div>
 <details class="config-details"><summary>Independent sessions vs. tracked subsessions</summary><ul><li><strong>Independent:</strong> fire-and-forget work in a workspace of the same project; output is not returned to the parent.</li><li><strong>Tracked:</strong> work in the parent’s working directory; completion wakes the parent and makes output available. No polling needed.</li><li><strong>Model:</strong> both tools accept an exact <code>provider/model-id</code>; otherwise they inherit the parent’s model. Thinking level is inherited and clamped to model capabilities.</li></ul></details>
 <details class="config-details"><summary>Question forms and extension dialogs are different</summary><ul><li><strong>Question forms:</strong> up to 20 questions, up to 12 choices per question, custom text, and optional answers. An ordinary chat message cancels an open form; a new form supersedes the old one.</li><li><strong>Persistence:</strong> an open question form survives browser/web restarts while its owning session daemon remains running.</li><li><strong>Extension dialogs:</strong> always supported, independently of <code>askUser</code>. The sooner of the extension’s timeout and the configured daemon timeout wins.</li><li><strong>Timeout result:</strong> <code>false</code> for confirmation; <code>undefined</code> for selection/text input.</li></ul></details>
+</section>
+<section id="web-push-notifications"><h2>Web push notifications</h2>
+<p>To receive notifications while the app is closed or backgrounded, configure <code>push.vapidPublicKey</code>, <code>push.vapidPrivateKey</code>, and <code>push.subjectEmail</code> in machine config, restart the session daemon, then enable Push notifications in Settings → General. Generate credentials with <code>npx web-push generate-vapid-keys</code>; <code>subjectEmail</code> must be an HTTPS URL or <code>mailto:</code> address. The corresponding <code>PI_WEB_PUSH_VAPID_PUBLIC_KEY</code>, <code>PI_WEB_PUSH_VAPID_PRIVATE_KEY</code>, and <code>PI_WEB_PUSH_VAPID_SUBJECT_EMAIL</code> environment variables override config values.</p>
+<p>Web Push requires HTTPS. The daemon stores browser subscriptions in <code>push-subscriptions.json</code> under its data directory and removes expired endpoints. See <a href="config.md#web-push-notifications">the detailed configuration reference</a> for behavior and limitations.</p>
 </section>
 <section id="plugin-config"><h2>Plugins & packages</h2>
 <p>Use <strong>Settings → PI WEB plugins</strong> for enablement/settings and <strong>Settings → Pi packages</strong> for package installation. These are separate operations.</p>

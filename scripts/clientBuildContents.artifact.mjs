@@ -32,6 +32,9 @@ describe("production client build contents", () => {
     const serviceWorker = await readFile(join(outDir, "sw.js"), "utf8");
     expect(serviceWorker).toContain("skipWaiting");
     expect(serviceWorker).toContain("clients.claim()");
+    expect(serviceWorker).toContain('addEventListener("push"');
+    expect(serviceWorker).toContain("showNotification");
+    expect(serviceWorker).toContain('addEventListener("notificationclick"');
     // Live session streams must not be intercepted by the service worker.
     expect(serviceWorker).not.toContain('addEventListener("fetch"');
   });
