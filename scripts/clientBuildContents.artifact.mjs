@@ -28,6 +28,12 @@ describe("production client build contents", () => {
         { src: "./pwa-icon-512.png" },
       ],
     });
+
+    const serviceWorker = await readFile(join(outDir, "sw.js"), "utf8");
+    expect(serviceWorker).toContain("skipWaiting");
+    expect(serviceWorker).toContain("clients.claim()");
+    // Live session streams must not be intercepted by the service worker.
+    expect(serviceWorker).not.toContain('addEventListener("fetch"');
   });
 });
 
