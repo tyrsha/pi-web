@@ -34,7 +34,17 @@ describe("production client build contents", () => {
     expect(serviceWorker).toContain("clients.claim()");
     expect(serviceWorker).toContain('addEventListener("push"');
     expect(serviceWorker).toContain("showNotification");
+    expect(serviceWorker).toContain("tag:");
     expect(serviceWorker).toContain('addEventListener("notificationclick"');
+    expect(serviceWorker).toContain("visibilityState");
+    expect(serviceWorker).toContain('addEventListener("message"');
+    expect(serviceWorker).toContain("clear-push-notifications");
+    expect(serviceWorker).toContain("getNotifications");
+    expect(serviceWorker).toContain("pi-web:open-session");
+    expect(serviceWorker).toContain("open-session-ack");
+    expect(serviceWorker).toContain('set("cwd"');
+    expect(serviceWorker).toContain('set("project"');
+    expect(serviceWorker).toContain('set("workspace"');
     // Live session streams must not be intercepted by the service worker.
     expect(serviceWorker).not.toContain('addEventListener("fetch"');
   });

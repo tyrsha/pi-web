@@ -2,7 +2,18 @@ import { resolveAppUrl, type AppUrlContext } from "./appUrl";
 
 /** Structural view of the service-worker registration API this module drives. */
 export interface ServiceWorkerContainerLike {
-  register(url: string): Promise<unknown>;
+  register(url: string): Promise<ServiceWorkerRegistrationLike | null | undefined>;
+}
+
+/** Structural view of the settled registration: only the active worker's `postMessage` is used. */
+export interface ServiceWorkerRegistrationLike {
+  readonly active?: { postMessage(message: unknown): void } | null | undefined;
+}
+
+/** Minimal structural view of the document surface used to observe foreground transitions. */
+export interface VisibilityDocumentLike {
+  readonly visibilityState: string;
+  addEventListener(type: "visibilitychange", listener: () => void): void;
 }
 
 /** Minimal structural view of the navigator surface this module uses. */
@@ -39,7 +50,8 @@ export function resolveServiceWorkerUrl(context?: AppUrlContext): string {
  *
  * Best-effort by contract: an unavailable ServiceWorkerContainer (insecure contexts, unsupported
  * browsers) is skipped silently, and a failed registration is logged without ever breaking the app —
- * PI WEB must keep working with no service worker at all.
+ * PI WEB must keep working with no service worker at all. A successful registration additionally
+ * arms foreground clearing of shown push notifications via {@link armForegroundNotificationClearing}.
  */
 export function registerPwaServiceWorker(options: RegisterPwaServiceWorkerOptions = {}): void {
   const navigatorObject = options.navigatorObject ?? (typeof navigator !== "undefined" ? navigator : undefined);
@@ -49,9 +61,14 @@ export function registerPwaServiceWorker(options: RegisterPwaServiceWorkerOption
   const url = options.url ?? resolveServiceWorkerUrl();
 
   const register = () => {
-    void container.register(url).catch((error: unknown) => {
-      console.debug("PI WEB service worker registration failed", error);
-    });
+    void container
+      .register(url)
+      .then((registration) => {
+        armForegroundNotificationClearing(registration);
+      })
+      .catch((error: unknown) => {
+        console.debug("PI WEB service worker registration failed", error);
+      });
   };
 
   if (windowObject === undefined || windowObject.document?.readyState === "complete") {
@@ -59,4 +76,21 @@ export function registerPwaServiceWorker(options: RegisterPwaServiceWorkerOption
     return;
   }
   windowObject.addEventListener("load", register);
+}
+
+/**
+ * Tell the active service worker to close shown push notifications whenever the page enters the
+ * foreground: a push notification is only meaningful while the app is not visible, and stale rows
+ * must not outlive the user's attention (the worker's push handler additionally skips new pushes
+ * while a window is visible; this half covers notifications shown while the app was away).
+ */
+export function armForegroundNotificationClearing(
+  registration: ServiceWorkerRegistrationLike | null | undefined,
+  doc: VisibilityDocumentLike | undefined = typeof document !== "undefined" ? document : undefined,
+): void {
+  if (doc === undefined) return;
+  doc.addEventListener("visibilitychange", () => {
+    if (doc.visibilityState !== "visible") return;
+    registration?.active?.postMessage({ type: "pi-web:clear-push-notifications" });
+  });
 }

@@ -17,3 +17,6 @@ dist/
 
 # Dev docs site staging output (scripts/build-docs-dev.mjs).
 /docs/.deploy/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

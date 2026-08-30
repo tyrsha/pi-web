@@ -73,6 +73,7 @@ import { installPluginBackendChannelWebSocketPayloadLimit } from "./webSocketBri
 import { registerPairedPluginBackendRoutes } from "./sessiond/pluginBackendRoutes.js";
 import { registerWorkspaceRemovalRoutes } from "./sessiond/workspaceRemovalRoutes.js";
 import { createWorkspaceProviderRuntimeSnapshot } from "./workspaces/workspaceCatalog.js";
+import { workspaceIdFor } from "./workspaces/workspaceIdentity.js";
 import { WorkspaceRemovalService } from "./workspaces/workspaceRemovalService.js";
 
 const daemonEnvironment: NodeJS.ProcessEnv = Object.freeze({ ...process.env });
@@ -227,7 +228,6 @@ async function createSessionDaemonRuntime() {
     } catch (error) {
       app.log.warn({ err: error }, "push subscription store unreadable; continuing without stored subscriptions");
     }
-    const push = createWebPushRuntime({ config, store: pushStore, eventHub, logger: app.log });
     const notificationStore = new SessionNotificationStore();
     const unreadStore = new SessionUnreadStore({
       persistence: new FileSessionUnreadPersistence(defaultSessionUnreadFilePath(daemonEnvironment)),
@@ -321,6 +321,23 @@ async function createSessionDaemonRuntime() {
       }),
     }));
     sessionsForFailedConstruction = sessions;
+    // Created after the session service so notification payloads can resolve a session's cwd into
+    // a deep-link route; the resolver stays lazy (per-event), the creation order only names it.
+    const push = createWebPushRuntime({
+      config,
+      store: pushStore,
+      eventHub,
+      logger: app.log,
+      resolveSessionCwd: (sessionId) => sessions.sessionCwd(sessionId),
+      // Canonical deep-link route ids: the session cwd equals the project path for main workspaces,
+      // whose workspace id is the shared workspaceIdentity formula over (projectId, path). Worktrees
+      // are not covered here and keep the client-side cwd join as their fallback.
+      resolveDeepLink: async (cwd) => {
+        const project = (await projects.list()).find((candidate) => candidate.path === cwd);
+        if (project === undefined) return undefined;
+        return { projectId: project.id, workspaceId: workspaceIdFor(project.id, cwd) };
+      },
+    });
     auth.subscribe((change) => { sessions.applyAuthChange(change); });
     // Current workspace authority and session ownership become available at
     // one atomic late boundary, so no dependent can start against a partial host.

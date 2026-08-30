@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppUrlContext } from "./appUrl";
 import {
+  armForegroundNotificationClearing,
   registerPwaServiceWorker,
   resolveServiceWorkerUrl,
   type PwaWindowLike,
   type ServiceWorkerContainerLike,
+  type ServiceWorkerRegistrationLike,
+  type VisibilityDocumentLike,
 } from "./pwaServiceWorker";
 
 const rootHttpContext: AppUrlContext = {
@@ -101,5 +104,55 @@ describe("registerPwaServiceWorker", () => {
     }).not.toThrow();
     await vi.waitFor(() => { expect(consoleDebug).toHaveBeenCalledTimes(1); });
     expect(consoleDebug).toHaveBeenCalledWith(expect.stringContaining("service worker registration failed"), error);
+  });
+
+  it("arms foreground notification clearing on the settled registration", async () => {
+    const postMessage = vi.fn();
+    const register = vi.fn().mockResolvedValue({ active: { postMessage } } satisfies ServiceWorkerRegistrationLike);
+    let visibilityListener: (() => void) | undefined;
+    let visibilityState = "hidden";
+    const doc: VisibilityDocumentLike = {
+      get visibilityState() {
+        return visibilityState;
+      },
+      addEventListener(_type, listener): void {
+        visibilityListener = listener;
+      },
+    };
+    vi.stubGlobal("document", doc);
+    const doneWindow = createLoadWindow("complete");
+    registerPwaServiceWorker({
+      navigatorObject: { serviceWorker: createContainer(register) },
+      windowObject: doneWindow.window,
+      url: "http://pi.example.test/sw.js",
+    });
+    await vi.waitFor(() => { expect(visibilityListener).toBeDefined(); });
+
+    visibilityListener?.();
+    expect(postMessage).not.toHaveBeenCalled(); // still hidden: nothing to clear
+    visibilityState = "visible";
+    visibilityListener?.();
+    expect(postMessage).toHaveBeenCalledWith({ type: "pi-web:clear-push-notifications" });
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("armForegroundNotificationClearing", () => {
+  it("is a silent no-op without a document", () => {
+    expect(() => { armForegroundNotificationClearing({ active: { postMessage: () => undefined } }, undefined); }).not.toThrow();
+  });
+
+  it("tolerates a registration without an active worker", () => {
+    let visibilityListener: (() => void) | undefined;
+    const doc: VisibilityDocumentLike = {
+      visibilityState: "visible",
+      addEventListener(_type, listener): void {
+        visibilityListener = listener;
+      },
+    };
+    armForegroundNotificationClearing(undefined, doc);
+    expect(() => {
+      visibilityListener?.();
+    }).not.toThrow();
   });
 });
