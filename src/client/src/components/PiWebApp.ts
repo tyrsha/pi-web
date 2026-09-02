@@ -3395,7 +3395,7 @@ export class PiWebApp extends LitElement {
 
   private readonly emptyClientQueue: NonNullable<AppState["clientQueuedSessionMessages"][string]> = [];
   private readonly handleMessageAction = (entryId: string, action: "fork" | "back") => this.sessions.actOnMessage(entryId, action);
-  private readonly handleLoadEarlierMessages = () => this.withChatPrependTransition(() => this.sessions.loadEarlierMessages());
+  private readonly handleLoadEarlierMessages = () => this.withChatPrependTransition(() => this.sessions.loadEarlierMessages({ waitForScrollIdle: () => this.chatView?.whenScrollIdle() ?? Promise.resolve() }));
   private notificationViewInput: AppState["selectedNotificationInbox"];
   private notificationView: ReturnType<typeof selectedNotificationView>;
 
