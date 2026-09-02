@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import { parseClientResumeDiagnostic, registerClientResumeDiagnosticRoutes } from "./clientResumeDiagnosticRoutes.js";
+import { parseClientResumeDiagnostic, parseClientResumeDiagnostics, registerClientResumeDiagnosticRoutes } from "./clientResumeDiagnosticRoutes.js";
 
 const diagnostic = {
   pageId: "pwa-page_123",
@@ -12,8 +12,10 @@ const diagnostic = {
 };
 
 describe("parseClientResumeDiagnostic", () => {
-  it("accepts content-free lifecycle breadcrumbs", () => {
+  it("accepts content-free lifecycle breadcrumbs, individually or in a bounded batch", () => {
     expect(parseClientResumeDiagnostic(diagnostic)).toEqual(diagnostic);
+    expect(parseClientResumeDiagnostics({ events: [diagnostic, { ...diagnostic, sequence: 4, event: "refresh.complete" }] }))
+      .toEqual([diagnostic, { ...diagnostic, sequence: 4, event: "refresh.complete" }]);
   });
 
   it.each([
@@ -32,7 +34,7 @@ describe("client resume diagnostic route", () => {
     const app = Fastify({ logger: false });
     registerClientResumeDiagnosticRoutes(app);
 
-    const accepted = await app.inject({ method: "POST", url: "/api/client-diagnostics/resume", payload: diagnostic });
+    const accepted = await app.inject({ method: "POST", url: "/api/client-diagnostics/resume", payload: { events: [diagnostic] } });
     const rejected = await app.inject({ method: "POST", url: "/api/client-diagnostics/resume", payload: { ...diagnostic, event: "unknown" } });
 
     expect(accepted.statusCode).toBe(202);

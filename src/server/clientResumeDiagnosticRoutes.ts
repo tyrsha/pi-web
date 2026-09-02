@@ -44,11 +44,22 @@ interface ClientResumeDiagnostic {
 /** Accept deliberately small, content-free iOS PWA resume breadcrumbs for journal inspection. */
 export function registerClientResumeDiagnosticRoutes(app: FastifyInstance): void {
   app.post<{ Body: unknown }>("/api/client-diagnostics/resume", async (request, reply) => {
-    const diagnostic = parseClientResumeDiagnostic(request.body);
-    if (diagnostic === undefined) return reply.code(400).send({ error: "Invalid client resume diagnostic" });
-    request.log.info({ clientResume: diagnostic }, "client resume diagnostic");
+    const diagnostics = parseClientResumeDiagnostics(request.body);
+    if (diagnostics === undefined) return reply.code(400).send({ error: "Invalid client resume diagnostic" });
+    for (const diagnostic of diagnostics) request.log.info({ clientResume: diagnostic }, "client resume diagnostic");
     return reply.code(202).send({ accepted: true });
   });
+}
+
+export function parseClientResumeDiagnostics(value: unknown): readonly ClientResumeDiagnostic[] | undefined {
+  if (isRecord(value) && Array.isArray(value["events"])) {
+    const events = value["events"];
+    if (events.length === 0 || events.length > 32) return undefined;
+    const diagnostics = events.map(parseClientResumeDiagnostic);
+    return diagnostics.every((diagnostic) => diagnostic !== undefined) ? diagnostics : undefined;
+  }
+  const diagnostic = parseClientResumeDiagnostic(value);
+  return diagnostic === undefined ? undefined : [diagnostic];
 }
 
 export function parseClientResumeDiagnostic(value: unknown): ClientResumeDiagnostic | undefined {
