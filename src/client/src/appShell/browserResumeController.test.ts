@@ -198,28 +198,19 @@ describe("BrowserResumeController", () => {
     controller.disconnect();
   });
 
-  it("runs one trailing refresh when another resume arrives during active work", async () => {
+  it("does not queue a duplicate refresh when focus and visibility arrive during active work", async () => {
     const windowTarget = new EventTarget();
     const documentTarget = new EventTarget();
     const frames = frameHarness();
     const firstGate = deferred<undefined>();
-    const secondGate = deferred<undefined>();
     const firstStarted = deferred<undefined>();
-    const secondStarted = deferred<undefined>();
-    const secondCompleted = deferred<undefined>();
     let refreshCalls = 0;
     const controller = new BrowserResumeController({
       onResumeSignal: () => undefined,
       refreshAfterResume: async () => {
         refreshCalls += 1;
-        if (refreshCalls === 1) {
-          firstStarted.resolve(undefined);
-          await firstGate.promise;
-          return;
-        }
-        secondStarted.resolve(undefined);
-        await secondGate.promise;
-        secondCompleted.resolve(undefined);
+        firstStarted.resolve(undefined);
+        await firstGate.promise;
       },
       onRefreshError: (error) => { throw error; },
     }, {
@@ -241,11 +232,8 @@ describe("BrowserResumeController", () => {
     expect(refreshCalls).toBe(1);
 
     firstGate.resolve(undefined);
-    await secondStarted.promise;
-    expect(refreshCalls).toBe(2);
-
-    secondGate.resolve(undefined);
-    await secondCompleted.promise;
+    await Promise.resolve();
+    expect(refreshCalls).toBe(1);
     controller.disconnect();
   });
 });
