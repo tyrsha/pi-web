@@ -42,7 +42,8 @@ import { createPluginWorkspaceBackend } from "../plugins/workspaceBackend";
 import { createWorkspaceFiles as createPluginWorkspaceFiles } from "../plugins/workspaceFiles";
 import { queryNamespace, readNamespacedString, setNamespacedQueryKey } from "../namespacedQueryArgs";
 import { AppShellController } from "../appShell/appShellController";
-import { BrowserResumeController } from "../appShell/browserResumeController";
+import { BrowserResumeController, type BrowserResumeTrigger } from "../appShell/browserResumeController";
+import { ResumeDiagnostics, resumeDiagnosticStepEvent, type ResumeDiagnosticEvent, type ResumeDiagnosticStep } from "../appShell/resumeDiagnostics";
 import { NavigationSectionsController, type NavigationSection } from "../appShell/navigationState";
 import { PanelCollapseController, mainViewClass } from "../appShell/panelCollapseController";
 import { PanelResizeController, type PanelResizeConstraints, type ResizablePanelSide } from "../appShell/panelResizeController";
@@ -208,7 +209,10 @@ export class PiWebApp extends LitElement {
     this.pushSubscriptionBinding.setEnabled(enabled);
     if (enabled) this.pushSubscriptionBinding.invalidate();
   };
-  private readonly onPushVisibilityChange = (): void => { this.syncPushSubscription(); };
+  private readonly onPushVisibilityChange = (): void => {
+    this.syncPushSubscription();
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") this.recordResumeDiagnostic("suspend");
+  };
   private readonly serverNotices = new ServerNoticesController({
     onChange: (machineId) => {
       if (selectedMachineId(this.state) === machineId) this.requestUpdate();
@@ -222,10 +226,14 @@ export class PiWebApp extends LitElement {
   private readonly machineNavigation = new SessionStorageMachineNavigationMemory();
   private readonly terminalSelection = new SessionStorageTerminalSelectionMemory();
   private readonly appShell = new AppShellController(this);
+  private readonly resumeDiagnostics = new ResumeDiagnostics();
   private readonly browserResume = new BrowserResumeController({
-    onResumeSignal: () => { this.handleBrowserResumeSignal(); },
+    onResumeSignal: (trigger) => { this.handleBrowserResumeSignal(trigger); },
     refreshAfterResume: () => this.refreshAfterBrowserResume(),
-    onRefreshError: (error) => { console.warn("Failed to refresh after browser resume", error); },
+    onRefreshError: (error) => {
+      this.recordResumeDiagnostic("refresh.failed");
+      console.warn("Failed to refresh after browser resume", error);
+    },
   });
   private readonly panelCollapse = new PanelCollapseController(this);
   private readonly panelResize = new PanelResizeController(this);
@@ -472,26 +480,46 @@ export class PiWebApp extends LitElement {
     await this.refreshWorkspaceDeletionRuns();
   }
 
-  private handleBrowserResumeSignal(): void {
+  private handleBrowserResumeSignal(trigger: BrowserResumeTrigger): void {
+    this.recordResumeDiagnostic(`signal.${trigger}`);
     this.appShell.repairViewportPosition();
     this.schedulePiWebStatusRefresh();
     this.retryPendingRemoteRouteRestoreSoon();
   }
 
   private async refreshAfterBrowserResume(): Promise<void> {
+    this.recordResumeDiagnostic("refresh.start");
     // iOS can preserve an apparently OPEN WebSocket whose network path died while the PWA
     // was suspended. Replace every live event stream before taking authoritative snapshots.
     this.sessions.reconnectSelectedSessionStream();
     this.realtime.reconnect();
     for (const socket of this.machineRealtimeSockets.values()) socket.reconnect();
-    await this.sessionUnread.refreshAll();
+    this.recordResumeDiagnostic("sockets.replaced");
+    await this.runResumeDiagnosticStep("unread", () => this.sessionUnread.refreshAll());
     await Promise.all([
-      this.sessions.refreshSelectedSession(),
-      this.refreshMachineStatusSnapshots(),
-      this.refreshWorkspaceDeletionRuns(),
-      this.refreshCurrentWorkspaceSurface(),
-      this.workspaces.refreshSelectedProjectTopology(),
+      this.runResumeDiagnosticStep("session", () => this.sessions.refreshSelectedSession()),
+      this.runResumeDiagnosticStep("machines", () => this.refreshMachineStatusSnapshots()),
+      this.runResumeDiagnosticStep("deletions", () => this.refreshWorkspaceDeletionRuns()),
+      this.runResumeDiagnosticStep("surface", () => this.refreshCurrentWorkspaceSurface()),
+      this.runResumeDiagnosticStep("topology", () => this.workspaces.refreshSelectedProjectTopology()),
     ]);
+    this.recordResumeDiagnostic("refresh.complete");
+  }
+
+  private async runResumeDiagnosticStep(step: ResumeDiagnosticStep, operation: () => Promise<void>): Promise<void> {
+    this.recordResumeDiagnostic(resumeDiagnosticStepEvent(step, "start"));
+    try {
+      await operation();
+      this.recordResumeDiagnostic(resumeDiagnosticStepEvent(step, "complete"));
+    } catch (error) {
+      this.recordResumeDiagnostic(resumeDiagnosticStepEvent(step, "failed"));
+      throw error;
+    }
+  }
+
+  private recordResumeDiagnostic(event: ResumeDiagnosticEvent): void {
+    this.resumeDiagnostics.setEnabled(this.appShell.isPwaDisplayMode);
+    this.resumeDiagnostics.record(event);
   }
 
   /** Poll idle external sessions without overlapping work or waking hidden tabs. */

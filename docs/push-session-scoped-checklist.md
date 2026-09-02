@@ -38,6 +38,8 @@
 - [x] Push 비활성 PWA는 복귀 시 service worker/PushManager API를 조회하지 않음
 - [x] iOS PWA 복귀 시 selected-session/global WebSocket을 교체하고 HTTP snapshot과 합류
 - [x] `pageshow`, `online`, hidden→visible에서 유실된 resume frame을 폐기하고 새 refresh 예약
+- [x] hidden 상태의 iOS `pageshow`/`online`은 무시하고 실제 visible 전환 뒤에만 socket·HTTP refresh 실행
+- [x] iOS PWA resume의 단계별 content-free 진단 breadcrumb를 서버 journal에 기록
 - [x] HTTPS, 브라우저 권한, service worker 조건에 맞는 오류 메시지 제공
 
 ### 운영 환경
@@ -67,6 +69,7 @@
 - Push 설정 UI의 등록·롤백·비활성화
 - Push 비활성 복귀 시 Web Push 조회 차단
 - iOS foreground 복귀 시 stale WebSocket 교체 및 resume lifecycle 신호 복구
+- hidden `pageshow`가 premature refresh를 일으키지 않는지 및 resume diagnostic endpoint 검증
 
 ### 개발 런타임
 
