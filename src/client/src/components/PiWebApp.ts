@@ -482,7 +482,9 @@ export class PiWebApp extends LitElement {
 
   private handleBrowserResumeSignal(trigger: BrowserResumeTrigger): void {
     this.recordResumeDiagnostic(`signal.${trigger}`);
-    this.appShell.repairViewportPosition();
+    // Do not force the document viewport while an installed iOS PWA is resuming.
+    // WebKit can leave the entire WebView non-interactive after scrollTo/scrollTop
+    // writes during this lifecycle transition.
     this.schedulePiWebStatusRefresh();
     this.retryPendingRemoteRouteRestoreSoon();
   }
