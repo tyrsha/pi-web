@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SessionUiEvent } from "../../shared/apiTypes.js";
 import type { PushSubscriptionRecord } from "./pushSubscriptionStore.js";
-import { DEFAULT_PUSH_COOLDOWN_MS, PUSH_NOTIFICATION_BODY_MAX_CHARS, WebPushNotifier, pushMessageForSessionEvent, truncateForPush, type PushSender, type SessionDeepLinkTarget } from "./webPushNotifier.js";
+import { DEFAULT_PUSH_COOLDOWN_MS, PUSH_NOTIFICATION_BODY_MAX_CHARS, STOPPED_NOTIFICATION_DELAY_MS, WebPushNotifier, pushMessageForSessionEvent, truncateForPush, type PushSender, type SessionDeepLinkTarget } from "./webPushNotifier.js";
 
 function assistantMessage(text: string): unknown {
   return { role: "assistant", content: [{ type: "text", text }] };
@@ -34,7 +34,7 @@ interface Harness {
   store: FakeSubscriptionStore;
 }
 
-function createNotifier(send?: PushSender, options?: { cooldownMs?: number | undefined; resolveCwd?: ((sessionId: string) => string | undefined) | undefined; resolveDeepLink?: ((cwd: string) => Promise<SessionDeepLinkTarget | undefined> | SessionDeepLinkTarget | undefined) | undefined }): Harness {
+function createNotifier(send?: PushSender, options?: { cooldownMs?: number | undefined; completionDelayMs?: number | undefined; resolveCwd?: ((sessionId: string) => string | undefined) | undefined; resolveDeepLink?: ((cwd: string) => Promise<SessionDeepLinkTarget | undefined> | SessionDeepLinkTarget | undefined) | undefined }): Harness {
   let clockValue = 0;
   const harnessErrors: string[] = [];
   const sentPayloads: { endpoint: string; payload: string }[] = [];
@@ -46,6 +46,7 @@ function createNotifier(send?: PushSender, options?: { cooldownMs?: number | und
   const notifier = new WebPushNotifier(send ?? defaultSend, {
     subscriptions: store,
     ...(options?.cooldownMs === undefined ? {} : { cooldownMs: options.cooldownMs }),
+    completionDelayMs: options?.completionDelayMs ?? 0,
     ...(options?.resolveCwd === undefined ? {} : { resolveCwd: options.resolveCwd }),
     ...(options?.resolveDeepLink === undefined ? {} : { resolveDeepLink: options.resolveDeepLink }),
     now: () => clockValue,
@@ -56,6 +57,12 @@ function createNotifier(send?: PushSender, options?: { cooldownMs?: number | und
 
 function settle(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function completeAssistantRun(notifier: WebPushNotifier, sessionId: string, text: string): void {
+  notifier.onSessionEvent(sessionId, { type: "agent.start" });
+  notifier.onSessionEvent(sessionId, { type: "message.end", message: assistantMessage(text) });
+  notifier.onSessionEvent(sessionId, { type: "agent.end" });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -128,7 +135,7 @@ describe("truncateForPush", () => {
 describe("WebPushNotifier", () => {
   it("delivers the notification payload with session data to every subscription", async () => {
     const harness = createNotifier();
-    harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("final answer") });
+    completeAssistantRun(harness.notifier, "s1", "final answer");
     await settle();
     expect(harness.sent).toHaveLength(1);
     expect(JSON.parse(harness.sent[0]?.payload ?? "{}")).toEqual({ title: "PI WEB", body: "final answer", data: { kind: "message", sessionId: "s1" } });
@@ -136,7 +143,7 @@ describe("WebPushNotifier", () => {
 
   it("carries the session cwd in the payload so the browser can resolve the deep-link route", async () => {
     const harness = createNotifier(undefined, { resolveCwd: (sessionId) => (sessionId === "s1" ? "/repo/app" : undefined) });
-    harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("done") });
+    completeAssistantRun(harness.notifier, "s1", "done");
     await settle();
     expect(JSON.parse(harness.sent[0]?.payload ?? "{}")).toEqual({ title: "PI WEB", body: "done", data: { kind: "message", sessionId: "s1", cwd: "/repo/app" } });
   });
@@ -144,7 +151,7 @@ describe("WebPushNotifier", () => {
   it("carries daemon-resolved canonical route ids so the service worker can link without a cwd join", async () => {
     const resolveDeepLink = vi.fn((cwd: string): SessionDeepLinkTarget | undefined => (cwd === "/repo/app" ? { projectId: "p1", workspaceId: "w1id12345678" } : undefined));
     const harness = createNotifier(undefined, { resolveCwd: () => "/repo/app", resolveDeepLink });
-    harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("done") });
+    completeAssistantRun(harness.notifier, "s1", "done");
     await settle();
     expect(resolveDeepLink).toHaveBeenCalledWith("/repo/app");
     expect(JSON.parse(harness.sent[0]?.payload ?? "{}")).toEqual({ title: "PI WEB", body: "done", data: { kind: "message", sessionId: "s1", cwd: "/repo/app", projectId: "p1", workspaceId: "w1id12345678" } });
@@ -152,39 +159,74 @@ describe("WebPushNotifier", () => {
 
   it("degrades to the cwd-only payload when the deep-link resolver fails", async () => {
     const harness = createNotifier(undefined, { resolveCwd: () => "/repo/app", resolveDeepLink: () => Promise.reject(new Error("projects.json unreadable")) });
-    harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("done") });
+    completeAssistantRun(harness.notifier, "s1", "done");
     await settle();
     // The notification must still go out, exactly like a daemon without the resolver.
     expect(harness.sent).toHaveLength(1);
     expect(JSON.parse(harness.sent[0]?.payload ?? "{}")).toEqual({ title: "PI WEB", body: "done", data: { kind: "message", sessionId: "s1", cwd: "/repo/app" } });
   });
 
+  it("holds intermediate assistant messages until the agent run ends, then sends only the final one", async () => {
+    const harness = createNotifier();
+    harness.notifier.onSessionEvent("s1", { type: "agent.start" });
+    harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("intermediate") });
+    harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("final") });
+    await settle();
+    expect(harness.sent).toHaveLength(0);
+
+    harness.notifier.onSessionEvent("s1", { type: "agent.end" });
+    await settle();
+    expect(JSON.parse(harness.sent[0]?.payload ?? "{}")).toMatchObject({ body: "final", data: { kind: "message", sessionId: "s1" } });
+  });
+
   it("coalesces bursts and delivers only to the mapped session", async () => {
     const harness = createNotifier();
-    harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("one") });
+    completeAssistantRun(harness.notifier, "s1", "one");
     harness.advance(1_000);
-    harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("two") }); // throttled for the mapped session
-    harness.notifier.onSessionEvent("s2", { type: "message.end", message: assistantMessage("unmapped") }); // never delivered to this subscription
+    completeAssistantRun(harness.notifier, "s1", "two"); // throttled for the mapped session
+    completeAssistantRun(harness.notifier, "s2", "unmapped"); // never delivered to this subscription
     await settle();
     expect(harness.sent.map((entry) => sessionIdOfPayload(entry.payload))).toEqual(["s1"]);
 
     harness.advance(DEFAULT_PUSH_COOLDOWN_MS);
-    harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("three") });
+    completeAssistantRun(harness.notifier, "s1", "three");
     await settle();
     expect(harness.sent).toHaveLength(2);
   });
 
   it("sends one stop notification per run even if terminal events repeat", async () => {
-    const harness = createNotifier();
-    harness.notifier.onSessionEvent("s1", { type: "agent.end" });
-    harness.notifier.onSessionEvent("s1", { type: "agent.end" });
-    await settle();
-    expect(harness.sent).toHaveLength(1);
+    vi.useFakeTimers();
+    try {
+      const harness = createNotifier(undefined, { completionDelayMs: STOPPED_NOTIFICATION_DELAY_MS });
+      harness.notifier.onSessionEvent("s1", { type: "agent.end" });
+      harness.notifier.onSessionEvent("s1", { type: "agent.end" });
+      await vi.advanceTimersByTimeAsync(STOPPED_NOTIFICATION_DELAY_MS);
+      expect(harness.sent).toHaveLength(1);
 
-    harness.notifier.onSessionEvent("s1", { type: "agent.start" });
-    harness.notifier.onSessionEvent("s1", { type: "agent.end" });
-    await settle();
-    expect(harness.sent).toHaveLength(2);
+      harness.notifier.onSessionEvent("s1", { type: "agent.start" });
+      harness.notifier.onSessionEvent("s1", { type: "agent.end" });
+      await vi.advanceTimersByTimeAsync(STOPPED_NOTIFICATION_DELAY_MS);
+      expect(harness.sent).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("suppresses a completion notification when a queued prompt immediately starts the next run", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = createNotifier(undefined, { completionDelayMs: STOPPED_NOTIFICATION_DELAY_MS });
+      harness.notifier.onSessionEvent("s1", { type: "agent.start" });
+      harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("intermediate") });
+      harness.notifier.onSessionEvent("s1", { type: "agent.end" });
+      await vi.advanceTimersByTimeAsync(STOPPED_NOTIFICATION_DELAY_MS - 1);
+      harness.notifier.onSessionEvent("s1", { type: "agent.start" });
+      await vi.advanceTimersByTimeAsync(STOPPED_NOTIFICATION_DELAY_MS);
+
+      expect(harness.sent).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("removes subscriptions the push service reports expired and logs other failures separately", async () => {
@@ -196,8 +238,8 @@ describe("WebPushNotifier", () => {
     };
     const notifier = new WebPushNotifier(flakySend, { subscriptions: store, onError: (message) => {
       errors.push(message);
-    }, now: () => 1 });
-    notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("retry me") });
+    }, completionDelayMs: 0, now: () => 1 });
+    completeAssistantRun(notifier, "s1", "retry me");
     await settle();
     expect(store.removed).toEqual(["https://push.example/svc/gone"]);
     expect(errors.some((line) => line.includes('removed 1 expired push subscription'))).toBe(true);
@@ -226,9 +268,9 @@ describe("WebPushNotifier", () => {
     };
     const notifier = new WebPushNotifier(syncThrowSend, { subscriptions: store, onError: (message) => {
       errors.push(message);
-    }, now: () => 1 });
+    }, completionDelayMs: 0, now: () => 1 });
     expect(() => {
-      notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("x") });
+      completeAssistantRun(notifier, "s1", "x");
     }).not.toThrow();
     await settle();
     expect(errors.some((line) => line.includes("delivery failed for 1 of 1 subscriptions"))).toBe(true);
@@ -238,7 +280,7 @@ describe("WebPushNotifier", () => {
     const send = vi.fn<PushSender>();
     const harness = createNotifier(send);
     harness.store.records.clear();
-    harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("nobody home") });
+    completeAssistantRun(harness.notifier, "s1", "nobody home");
     await settle();
     expect(send).not.toHaveBeenCalled();
   });
@@ -255,7 +297,9 @@ describe("WebPushNotifier", () => {
       },
     });
     expect(capturedListener).toBeTypeOf("function");
+    capturedListener?.("s1", { type: "agent.start" });
     capturedListener?.("s1", { type: "message.end", message: assistantMessage("via hub") });
+    capturedListener?.("s1", { type: "agent.end" });
     await settle();
     expect(harness.sent).toHaveLength(1);
     stop();

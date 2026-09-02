@@ -124,6 +124,8 @@ describe("settings-push-notifications", () => {
     pushApiMock.subscribe.mockResolvedValue(true);
 
     const panel = await mountAndSettle();
+    const onSubscriptionChanged = vi.fn();
+    panel.onSubscriptionChanged = onSubscriptionChanged;
     clickButton(panel);
     await flushAsyncWork();
 
@@ -134,6 +136,8 @@ describe("settings-push-notifications", () => {
     expect(registered?.keys).toEqual(SUBSCRIPTION_JSON.keys);
     expect(registered?.instanceId).toMatch(/^[0-9a-f-]{36}$/);
     expect(registered?.foreground).toBe(false);
+    expect(localStorage.getItem("pi-web.push.subscription-enabled")).toBe("true");
+    expect(onSubscriptionChanged).toHaveBeenCalledWith(true);
     // The application server key reached the browser API decoded, not as raw base64url text.
     expect(swFakes.receivedOptions).toHaveLength(1);
     expect(swFakes.receivedOptions[0]?.userVisibleOnly).toBe(true);
@@ -190,6 +194,8 @@ describe("settings-push-notifications", () => {
     const swFakes = defineServiceWorkerFake(SUBSCRIPTION_JSON); // already subscribed in this browser profile
 
     const panel = await mountAndSettle();
+    const onSubscriptionChanged = vi.fn();
+    panel.onSubscriptionChanged = onSubscriptionChanged;
     expect(swFakes.getSubscription).toHaveBeenCalled(); // refresh probes the current subscription on connect
     expect(panel.renderRoot.querySelector("button")?.textContent).toContain("Disable push notifications");
     clickButton(panel);
@@ -197,6 +203,8 @@ describe("settings-push-notifications", () => {
 
     expect(swFakes.unsubscribeLocal).toHaveBeenCalledOnce(); // browser-side stop: OS delivery ends and remounts observe no subscription
     expect(pushApiMock.unsubscribe).toHaveBeenCalledWith(SUBSCRIPTION_JSON); // server drops the endpoint too
+    expect(localStorage.getItem("pi-web.push.subscription-enabled")).toBeNull();
+    expect(onSubscriptionChanged).toHaveBeenCalledWith(false);
     expect(panel.renderRoot.textContent).toContain("Push notifications are off.");
   });
 

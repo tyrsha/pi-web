@@ -26,7 +26,7 @@ export class SettingsDialog extends LitElement {
   @property({ attribute: false }) onClose?: () => void;
   @property({ attribute: false }) onConfigSaved?: (config: PiWebConfigValues) => void;
   @property({ attribute: false }) onRefreshMachineRuntime?: (machineId: string) => void | Promise<void>;
-  @property({ attribute: false }) onPushSubscriptionChanged?: () => void;
+  @property({ attribute: false }) onPushSubscriptionChanged?: (enabled: boolean) => void;
   @state() private configResponse: PiWebConfigResponse | undefined;
   @state() private accessConfigResponse: PiWebConfigResponse | undefined;
   @state() private sessiondConfigResponse: PiWebConfigResponse | undefined;

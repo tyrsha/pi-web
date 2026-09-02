@@ -204,7 +204,10 @@ export class PiWebApp extends LitElement {
   private readonly keyboard = new KeyboardShortcutDispatcher();
   private readonly realtime = new RealtimeSocket();
   private readonly pushSubscriptionBinding = new PushSubscriptionBinding();
-  private readonly onPushSubscriptionChanged = (): void => { this.pushSubscriptionBinding.invalidate(); };
+  private readonly onPushSubscriptionChanged = (enabled: boolean): void => {
+    this.pushSubscriptionBinding.setEnabled(enabled);
+    if (enabled) this.pushSubscriptionBinding.invalidate();
+  };
   private readonly onPushVisibilityChange = (): void => { this.syncPushSubscription(); };
   private readonly serverNotices = new ServerNoticesController({
     onChange: (machineId) => {

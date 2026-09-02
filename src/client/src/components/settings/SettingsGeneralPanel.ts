@@ -35,7 +35,7 @@ export class SettingsGeneralPanel extends LitElement {
   @property({ attribute: false }) onReloadMachine?: () => void | Promise<void>;
   @property({ attribute: false }) onSave?: (config: PiWebConfigValues) => void | Promise<void>;
   @property({ attribute: false }) onSaveMachineConfig?: (config: PiWebConfigValues) => void | Promise<void>;
-  @property({ attribute: false }) onPushSubscriptionChanged?: () => void;
+  @property({ attribute: false }) onPushSubscriptionChanged?: (enabled: boolean) => void;
   @state() private gatewayDraft: GatewayServerConfigDraft = emptyGatewayServerConfigDraft();
   @state() private machineDraft: MachineAccessConfigDraft = emptyMachineAccessConfigDraft();
   @state() private gatewayLocalError = "";
