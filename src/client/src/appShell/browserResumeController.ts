@@ -76,7 +76,18 @@ export class BrowserResumeController {
   };
 
   private handleResumeSignal(trigger: BrowserResumeTrigger): void {
-    this.callbacks.onResumeSignal(trigger);
+    // Focus and visibility can arrive several times during one iOS PWA resume.
+    // The refresh is coalesced below, and the synchronous signal callback must
+    // be coalesced with it too: it repairs the viewport and schedules timers.
+    if (this.refreshing) {
+      // Keep the frame lifecycle replaceable, but never repeat the synchronous
+      // viewport/timer side effects while the authoritative refresh is active.
+      this.cancelScheduledRefresh();
+      this.scheduledRefresh = this.scheduleFrame(() => { this.scheduledRefresh = undefined; });
+      return;
+    }
+    const hasScheduledRefresh = this.scheduledRefresh !== undefined;
+    if (!hasScheduledRefresh) this.callbacks.onResumeSignal(trigger);
     // WebKit may discard a queued animation frame while suspending an installed PWA.
     // Replace, rather than trust, any pre-suspension callback on every fresh resume signal.
     this.cancelScheduledRefresh();
