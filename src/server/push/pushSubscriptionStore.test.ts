@@ -13,6 +13,10 @@ function sampleKeys(index: number): Record<string, string> {
   return { p256dh: `p256dh-${String(index)}`, auth: `auth-${String(index)}` };
 }
 
+function sampleSubscription(index: number) {
+  return { endpoint: sampleEndpoint(index), keys: sampleKeys(index), instanceId: `instance-${String(index)}`, foreground: false };
+}
+
 describe("PushSubscriptionStore", () => {
   let dir: string;
   const paths = new Set<string>();
@@ -44,28 +48,28 @@ describe("PushSubscriptionStore", () => {
     await store.load();
     expect(store.size).toBe(0);
 
-    expect(store.add({ endpoint: sampleEndpoint(1), keys: sampleKeys(1) })).toBe("added");
+    expect(store.add(sampleSubscription(1))).toBe("added");
     await store.flush();
     expect(await readFile(filePath(), "utf8")).toContain(sampleEndpoint(1));
 
     const reloaded = new PushSubscriptionStore(filePath());
     await reloaded.load();
-    expect(reloaded.list()).toEqual([{ endpoint: sampleEndpoint(1), keys: { p256dh: "p256dh-1", auth: "auth-1" } }]);
+    expect(reloaded.list()).toEqual([sampleSubscription(1)]);
   });
 
-  it("treats duplicate endpoints as no-ops", async () => {
+  it("updates an endpoint when its PWA/session mapping changes", async () => {
     const store = new PushSubscriptionStore(filePath());
     await store.load();
-    expect(store.add({ endpoint: sampleEndpoint(2), keys: sampleKeys(2) })).toBe("added");
-    expect(store.add({ endpoint: sampleEndpoint(2), keys: sampleKeys(99) })).toBe("duplicate");
-    expect(store.list()).toEqual([{ endpoint: sampleEndpoint(2), keys: sampleKeys(2) }]);
+    expect(store.add(sampleSubscription(2))).toBe("added");
+    expect(store.add({ ...sampleSubscription(99), endpoint: sampleEndpoint(2) })).toBe("updated");
+    expect(store.list()).toEqual([{ ...sampleSubscription(99), endpoint: sampleEndpoint(2) }]);
   });
 
   it("refuses new subscriptions past the cap without evicting existing ones", async () => {
     const store = new PushSubscriptionStore(filePath());
     await store.load();
-    for (let index = 0; index < 256; index += 1) expect(store.add({ endpoint: sampleEndpoint(index), keys: sampleKeys(index) })).toBe("added");
-    expect(store.add({ endpoint: sampleEndpoint(999), keys: sampleKeys(999) })).toBe("full");
+    for (let index = 0; index < 256; index += 1) expect(store.add(sampleSubscription(index))).toBe("added");
+    expect(store.add(sampleSubscription(999))).toBe("full");
     expect(store.size).toBe(256);
     expect(store.list().some((entry) => entry.endpoint === sampleEndpoint(0))).toBe(true);
   });
@@ -73,7 +77,7 @@ describe("PushSubscriptionStore", () => {
   it("removes by endpoint and persists the removal", async () => {
     const store = new PushSubscriptionStore(filePath());
     await store.load();
-    store.add({ endpoint: sampleEndpoint(3), keys: sampleKeys(3) });
+    store.add(sampleSubscription(3));
     expect(store.remove(sampleEndpoint(3))).toBe(true);
     expect(store.remove(sampleEndpoint(404))).toBe(false);
     await store.flush();
@@ -85,7 +89,7 @@ describe("PushSubscriptionStore", () => {
 
   it("throws with a contextual error on corrupted JSON so callers can log and reset deliberately", async () => {
     const store = new PushSubscriptionStore(filePath());
-    store.add({ endpoint: sampleEndpoint(5), keys: sampleKeys(5) });
+    store.add(sampleSubscription(5));
     await store.flush(); // quiesce the best-effort save before corrupting
     await writeFile(filePath(), "{not json", "utf8");
 
@@ -93,14 +97,21 @@ describe("PushSubscriptionStore", () => {
     await expect(fresh.load()).rejects.toThrow(/push subscription store is not valid JSON/);
   });
 
+  it("rejects a legacy v1 file instead of loading broadcast-capable rows", async () => {
+    await writeFile(filePath(), `${JSON.stringify({ version: 1, subscriptions: [sampleSubscription(7)] }, null, 2)}\n`, "utf8");
+    const reloaded = new PushSubscriptionStore(filePath());
+    await expect(reloaded.load()).rejects.toThrow(/not a valid push subscriptions file/);
+    expect(reloaded.list()).toEqual([]);
+  });
+
   it("skips stored entries without the VAPID key pair instead of keeping undeliverable rows", async () => {
     const store = new PushSubscriptionStore(filePath());
-    store.add({ endpoint: sampleEndpoint(6), keys: sampleKeys(6) });
+    store.add(sampleSubscription(6));
     await store.flush(); // ensure the overwrite below wins, not a racing best-effort save
     const { writeFile } = await import("node:fs/promises");
     await writeFile(
       filePath(),
-      `${JSON.stringify({ version: 1, subscriptions: [{ endpoint: "https://push.example/svc", keys: {} }] }, null, 2)}\n`,
+      `${JSON.stringify({ version: 2, subscriptions: [{ endpoint: "https://push.example/svc", keys: {}, instanceId: "instance-invalid", foreground: false }] }, null, 2)}\n`,
       "utf8",
     );
 
@@ -111,7 +122,7 @@ describe("PushSubscriptionStore", () => {
 
   it("flush resolves once best-effort saves have settled", async () => {
     const store = new PushSubscriptionStore(filePath());
-    for (let index = 0; index < 5; index += 1) store.add({ endpoint: sampleEndpoint(index), keys: sampleKeys(index) });
+    for (let index = 0; index < 5; index += 1) store.add(sampleSubscription(index));
     await expect(store.flush()).resolves.toBeUndefined();
     expect(await readFile(filePath(), "utf8")).toContain(sampleEndpoint(4));
   });
@@ -124,7 +135,7 @@ describe("PushSubscriptionStore", () => {
       .mockImplementationOnce(() => firstSave)
       .mockResolvedValueOnce(undefined);
 
-    store.add({ endpoint: sampleEndpoint(40), keys: sampleKeys(40) });
+    store.add(sampleSubscription(40));
     await Promise.resolve();
     expect(save).toHaveBeenCalledOnce();
 
@@ -142,7 +153,7 @@ describe("PushSubscriptionStore", () => {
     // A directory as the file path makes every write fail (EISDIR) while leaving memory untouched.
     paths.add(dir);
     const store = new PushSubscriptionStore(dir, { onPersistenceError: (operation, error) => { errors.push({ operation, error }); } });
-    expect(store.add({ endpoint: sampleEndpoint(42), keys: sampleKeys(42) })).toBe("added");
+    expect(store.add(sampleSubscription(42))).toBe("added");
     await store.flush();
     expect(errors).toHaveLength(1);
     expect(errors[0]?.operation).toBe("save");
@@ -153,7 +164,7 @@ describe("PushSubscriptionStore", () => {
 
   it("reports load failures through onPersistenceError and still throws so callers can reset deliberately", async () => {
     const store = new PushSubscriptionStore(filePath());
-    store.add({ endpoint: sampleEndpoint(50), keys: sampleKeys(50) });
+    store.add(sampleSubscription(50));
     await store.flush();
     await writeFile(filePath(), "{not json", "utf8");
 
@@ -169,7 +180,7 @@ describe("PushSubscriptionStore", () => {
     const store = new PushSubscriptionStore(dir, { onPersistenceError: () => {
       throw new Error("callback exploded");
     } });
-    expect(() => { store.add({ endpoint: sampleEndpoint(51), keys: sampleKeys(51) }); }).not.toThrow();
+    expect(() => { store.add(sampleSubscription(51)); }).not.toThrow();
     await expect(store.flush()).resolves.toBeUndefined();
     expect(store.size).toBe(1);
   });

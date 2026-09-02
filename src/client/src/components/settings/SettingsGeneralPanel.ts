@@ -35,6 +35,7 @@ export class SettingsGeneralPanel extends LitElement {
   @property({ attribute: false }) onReloadMachine?: () => void | Promise<void>;
   @property({ attribute: false }) onSave?: (config: PiWebConfigValues) => void | Promise<void>;
   @property({ attribute: false }) onSaveMachineConfig?: (config: PiWebConfigValues) => void | Promise<void>;
+  @property({ attribute: false }) onPushSubscriptionChanged?: () => void;
   @state() private gatewayDraft: GatewayServerConfigDraft = emptyGatewayServerConfigDraft();
   @state() private machineDraft: MachineAccessConfigDraft = emptyMachineAccessConfigDraft();
   @state() private gatewayLocalError = "";
@@ -65,7 +66,7 @@ export class SettingsGeneralPanel extends LitElement {
           ${this.renderGatewayServerSettings()}
           ${this.renderSelectedMachineAccessSettings()}
           <!-- Deployment-local browser state, deliberately outside the config drafts above. -->
-          <settings-push-notifications></settings-push-notifications>
+          <settings-push-notifications .onSubscriptionChanged=${this.onPushSubscriptionChanged}></settings-push-notifications>
         </div>
       </settings-panel-frame>
     `;

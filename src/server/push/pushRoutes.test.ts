@@ -28,6 +28,11 @@ const validSubscription = {
   endpoint: "https://fcm.googleapis.com/fcm/send/browser-1",
   expirationTime: null,
   keys: { p256dh: "p2key", auth: "authkey" },
+  instanceId: "browser-instance-1",
+  sessionId: "session-1",
+  projectId: "project-1",
+  workspaceId: "workspace-1",
+  foreground: false,
 };
 
 async function appWith(deps: PushRouteDependencies): Promise<FastifyInstance> {
@@ -83,8 +88,8 @@ describe("registerPushRoutes", () => {
     // Object payloads get application/json from light-my-request, mirroring real browser requests.
     const invalidBodies = [
       undefined, // no body at all
-      { endpoint: "http://insecure.example/svc", keys: validSubscription.keys }, // push services are https-only
-      { endpoint: validSubscription.endpoint, keys: { p256dh: "only-one" } }, // missing auth key
+      { endpoint: "http://insecure.example/svc", keys: validSubscription.keys, instanceId: "instance-1", foreground: false }, // push services are https-only
+      { endpoint: validSubscription.endpoint, keys: { p256dh: "only-one" }, instanceId: "instance-1", foreground: false }, // missing auth key
     ];
     for (const body of invalidBodies) {
       const response = await app.inject({ method: "POST", url: "/push/subscribe", ...(body === undefined ? {} : { payload: body }) });
@@ -97,7 +102,7 @@ describe("registerPushRoutes", () => {
 
   it("answers 507 instead of evicting once the subscription cap is reached", async () => {
     const store = new CountingStore(1);
-    store.add({ endpoint: validSubscription.endpoint });
+    store.add(validSubscription);
     const app = await fixture({ configured: true, publicKey: "pk", store });
     // The existing endpoint resubscribes as a duplicate; only a NEW endpoint hits the cap path.
     expect((await app.inject({ method: "POST", url: "/push/subscribe", payload: validSubscription })).statusCode).toBe(200);
@@ -108,7 +113,7 @@ describe("registerPushRoutes", () => {
 
   it("removes subscriptions on unsubscribe and reports absent ones as removed:false", async () => {
     const store = new CountingStore();
-    store.add({ endpoint: validSubscription.endpoint });
+    store.add(validSubscription);
     const app = await fixture({ configured: true, publicKey: "pk", store });
     expect((await app.inject({ method: "DELETE", url: "/push/unsubscribe", payload: validSubscription })).json()).toEqual({ removed: true });
     expect(store.removedCount).toBe(1);

@@ -50,6 +50,7 @@ import { PanelCollapseController, mainViewClass } from "../appShell/panelCollaps
 import { PanelResizeController, type PanelResizeConstraints, type ResizablePanelSide } from "../appShell/panelResizeController";
 import { isCreatingSessionId, parseMainView, readRoute, resolveAppRoute, resolveNotificationRoute, routeMatchesWorkspaceIdentity, writeRoute, type AppRoute, type ParsedAppRoute, type WorkspaceRouteIdentity } from "../route";
 import { handleServiceWorkerSessionMessage } from "../swMessageRouting";
+import { PushSubscriptionBinding } from "../pushSubscriptionBinding";
 import { readSettingsSection, writeSettingsSection, type SettingsSection } from "../settingsRoute";
 import { applyActiveShortcutPreferences } from "../shortcutPreferences";
 import { loadNavigationPreferences, saveNavigationPreferences, pinnedNavigationTabs, type NavigationPreferences } from "../navigationPreferences";
@@ -243,6 +244,9 @@ export class PiWebApp extends LitElement {
   );
   private readonly keyboard = new KeyboardShortcutDispatcher();
   private readonly realtime = new RealtimeSocket();
+  private readonly pushSubscriptionBinding = new PushSubscriptionBinding();
+  private readonly onPushSubscriptionChanged = (): void => { this.pushSubscriptionBinding.invalidate(); };
+  private readonly onPushVisibilityChange = (): void => { this.syncPushSubscription(); };
   private readonly serverNotices = new ServerNoticesController({
     onChange: (machineId) => {
       if (selectedMachineId(this.state) === machineId) this.requestUpdate();
@@ -402,6 +406,7 @@ export class PiWebApp extends LitElement {
     // deduplicates acknowledgements for the observed completion order.
     this.committedChatIdentity = selectedChatIdentity(this.state);
     this.syncSelectedSessionReadState();
+    this.syncPushSubscription();
   }
 
   private syncSessionWarningVisibility(): void {
@@ -466,6 +471,7 @@ export class PiWebApp extends LitElement {
     window.addEventListener("popstate", this.onPopState);
     window.addEventListener("message", this.onWindowMessage);
     window.addEventListener("pageshow", this.onPageShow);
+    if (typeof document.addEventListener === "function") document.addEventListener("visibilitychange", this.onPushVisibilityChange);
     this.browserResume.connect();
     window.addEventListener("keydown", this.onKeyDown, GLOBAL_SHORTCUT_LISTENER_OPTIONS);
     window.addEventListener("focusin", this.resetKeyboardSequence);
@@ -489,6 +495,7 @@ export class PiWebApp extends LitElement {
     window.removeEventListener("popstate", this.onPopState);
     window.removeEventListener("message", this.onWindowMessage);
     window.removeEventListener("pageshow", this.onPageShow);
+    if (typeof document.removeEventListener === "function") document.removeEventListener("visibilitychange", this.onPushVisibilityChange);
     this.browserResume.disconnect();
     window.removeEventListener("keydown", this.onKeyDown, GLOBAL_SHORTCUT_LISTENER_OPTIONS);
     window.removeEventListener("focusin", this.resetKeyboardSequence);
@@ -538,6 +545,18 @@ export class PiWebApp extends LitElement {
     this.handleMachineChange(previous, this.state);
     if (machineActivitySubscriptionInputsChanged(previous, this.state)) this.syncMachineActivitySubscriptions();
     this.notifications.syncEnvironment(previous, this.state);
+    this.syncPushSubscription();
+  }
+
+  private syncPushSubscription(): void {
+    const isLocal = selectedMachineId(this.state) === "local";
+    const session = isLocal ? this.state.selectedSession : undefined;
+    this.pushSubscriptionBinding.sync({
+      foreground: session !== undefined && this.isSessionSeen("local", session),
+      ...(session === undefined ? {} : { sessionId: session.id }),
+      ...(this.state.selectedProject === undefined ? {} : { projectId: this.state.selectedProject.id }),
+      ...(this.state.selectedWorkspace === undefined ? {} : { workspaceId: this.state.selectedWorkspace.id }),
+    });
   }
 
   private async loadProjectsAndRestoreRoute() {
@@ -3554,7 +3573,7 @@ export class PiWebApp extends LitElement {
         ${state.machineDialogOpen ? html`<machine-dialog .error=${state.error} .onSubmit=${(input: MachineDialogSubmit) => this.submitMachineDialog(input)} .onCancel=${() => { this.setState({ machineDialogOpen: false }); }}></machine-dialog>` : null}
         ${this.sessionCleanupDialog !== undefined ? html`<session-cleanup-dialog .preview=${this.sessionCleanupDialog.preview} .previewRequest=${this.sessionCleanupDialog.previewRequest} .result=${this.sessionCleanupDialog.result} .loading=${this.sessionCleanupDialog.loading === true} .running=${this.sessionCleanupDialog.running === true} .error=${this.sessionCleanupDialog.error ?? ""} .onPreview=${(request: SessionCleanupRequest) => { void this.previewSessionCleanup(request); }} .onRun=${(request: SessionCleanupRequest) => { void this.runSessionCleanup(request); }} .onClose=${() => { this.closeSessionCleanupDialog(); }}></session-cleanup-dialog>` : null}
         ${state.themeDialog !== undefined ? html`<command-picker title=${state.themeDialog.title} .options=${state.themeDialog.options} .selectedValue=${state.themeDialog.selectedValue} .onPick=${(value: string) => { this.pickTheme(value); }} .onCancel=${() => { this.setState({ themeDialog: undefined }); }}></command-picker>` : null}
-        ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .actions=${this.getDefaultActions()} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${async (machineId: string) => { await this.machines.refreshMachineRuntime(machineId); }}></settings-dialog>` : null}
+        ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .actions=${this.getDefaultActions()} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onPushSubscriptionChanged=${this.onPushSubscriptionChanged} .onRefreshMachineRuntime=${async (machineId: string) => { await this.machines.refreshMachineRuntime(machineId); }}></settings-dialog>` : null}
       </div>
     `;
   }
