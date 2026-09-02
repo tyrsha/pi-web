@@ -36,6 +36,8 @@
 - [x] 세션 변경 및 foreground/background 전환 시 서버 매핑 동기화
 - [x] Push 활성화·비활성화 후 매핑을 즉시 갱신
 - [x] Push 비활성 PWA는 복귀 시 service worker/PushManager API를 조회하지 않음
+- [x] iOS PWA 복귀 시 selected-session/global WebSocket을 교체하고 HTTP snapshot과 합류
+- [x] `pageshow`, `online`, hidden→visible에서 유실된 resume frame을 폐기하고 새 refresh 예약
 - [x] HTTPS, 브라우저 권한, service worker 조건에 맞는 오류 메시지 제공
 
 ### 운영 환경
@@ -64,6 +66,7 @@
 - run 완료 전 중간 assistant 응답 Push 억제 및 queued follow-up 취소
 - Push 설정 UI의 등록·롤백·비활성화
 - Push 비활성 복귀 시 Web Push 조회 차단
+- iOS foreground 복귀 시 stale WebSocket 교체 및 resume lifecycle 신호 복구
 
 ### 개발 런타임
 

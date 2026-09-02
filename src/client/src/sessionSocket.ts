@@ -39,6 +39,16 @@ export class SessionSocket {
     this.onEvent = onEvent;
   }
 
+  /** Replace a socket that the browser may still report open after network suspension. */
+  reconnect(): void {
+    if (!this.shouldReconnect) return;
+    window.clearTimeout(this.reconnectTimer);
+    closeSocketQuietly(this.socket);
+    this.socket = undefined;
+    this.reconnectDelay = 500;
+    this.open();
+  }
+
   close(): void {
     this.shouldReconnect = false;
     window.clearTimeout(this.reconnectTimer);
@@ -105,6 +115,16 @@ export class RealtimeSocket {
     this.onEvent = onEvent;
     this.onOpen = onOpen;
     this.shouldReconnect = true;
+    this.open();
+  }
+
+  /** Replace a socket that the browser may still report open after network suspension. */
+  reconnect(): void {
+    if (!this.shouldReconnect) return;
+    window.clearTimeout(this.reconnectTimer);
+    closeSocketQuietly(this.socket);
+    this.socket = undefined;
+    this.reconnectDelay = 500;
     this.open();
   }
 
