@@ -26,6 +26,7 @@ import { createPiWebStatusCache, type PiWebStatusCache } from "./piWebStatusCach
 import { detectPiWebInstallation, getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus } from "./piWebStatus.js";
 import { createDeploymentFlavorResolver } from "./deploymentIdentity.js";
 import { registerDeploymentIdentityAssetRoutes } from "./deploymentIdentityRoutes.js";
+import { registerClientResumeDiagnosticRoutes } from "./clientResumeDiagnosticRoutes.js";
 import type { PiWebDeploymentFlavor } from "./deploymentIdentity.js";
 import {
   ActiveAgentProfileAccessError,
@@ -237,6 +238,7 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   // only after the web-owned initial build and API startup have completed.
   app.get("/api/pi-web/health", () => Promise.resolve({ ok: true }));
   app.get("/api/pi-web/runtime", async () => getPiWebRuntime(sessionDaemon));
+  registerClientResumeDiagnosticRoutes(app);
   app.get("/api/plugins", async (_request, reply) => withProfileDependency(reply, () => piWebPlugins.plugins()));
   app.get("/api/machines/local/plugins", async (_request, reply) => withProfileDependency(reply, () => piWebPlugins.plugins()));
   registerPiPackageRoutes(app, piPackages);

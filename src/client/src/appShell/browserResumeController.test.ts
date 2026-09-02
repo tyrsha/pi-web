@@ -97,6 +97,7 @@ describe("BrowserResumeController", () => {
 
     refreshGate.resolve(undefined);
     await refreshCompleted.promise;
+    visible = true;
     windowTarget.dispatchEvent(new Event("focus"));
     expect(frames.pendingCount()).toBe(1);
     controller.disconnect();
@@ -132,6 +133,36 @@ describe("BrowserResumeController", () => {
     frames.runNext();
     await Promise.resolve();
     expect(refreshAfterResume).toHaveBeenCalledOnce();
+    controller.disconnect();
+  });
+
+  it("waits for visibility before handling a premature hidden pageshow", () => {
+    const windowTarget = new EventTarget();
+    const documentTarget = new EventTarget();
+    const frames = frameHarness();
+    const onResumeSignal = vi.fn();
+    let visible = false;
+    const controller = new BrowserResumeController({
+      onResumeSignal,
+      refreshAfterResume: () => Promise.resolve(),
+      onRefreshError: (error) => { throw error; },
+    }, {
+      windowTarget,
+      documentTarget,
+      isDocumentVisible: () => visible,
+      scheduleFrame: frames.scheduleFrame,
+    });
+    controller.connect();
+
+    windowTarget.dispatchEvent(new Event("pageshow"));
+    windowTarget.dispatchEvent(new Event("online"));
+    expect(onResumeSignal).not.toHaveBeenCalled();
+    expect(frames.pendingCount()).toBe(0);
+
+    visible = true;
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+    expect(onResumeSignal).toHaveBeenCalledWith("visibility");
+    expect(frames.pendingCount()).toBe(1);
     controller.disconnect();
   });
 

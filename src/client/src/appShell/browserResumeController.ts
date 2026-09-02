@@ -12,8 +12,10 @@ interface ScheduledFrame {
 /** WebKit can lose a queued animation frame while resuming a suspended standalone PWA. */
 export const BROWSER_RESUME_FRAME_FALLBACK_MS = 250;
 
+export type BrowserResumeTrigger = "focus" | "online" | "pageshow" | "visibility";
+
 export interface BrowserResumeCallbacks {
-  onResumeSignal(): void;
+  onResumeSignal(trigger: BrowserResumeTrigger): void;
   refreshAfterResume(): void | Promise<void>;
   onRefreshError(error: unknown): void;
 }
@@ -61,17 +63,24 @@ export class BrowserResumeController {
     this.cancelScheduledRefresh();
   }
 
-  private readonly onResumeEvent: EventListener = () => {
-    this.handleResumeSignal();
+  private readonly onResumeEvent: EventListener = (event) => {
+    if (event.type !== "focus" && event.type !== "online" && event.type !== "pageshow") return;
+    // iOS standalone PWAs can dispatch pageshow before visibility becomes visible.
+    // Refreshing then churns sockets and HTTP while WebKit still suspends the page.
+    if (!this.isDocumentVisible()) {
+      this.cancelScheduledRefresh();
+      return;
+    }
+    this.handleResumeSignal(event.type);
   };
 
   private readonly onVisibilityChange: EventListener = () => {
-    if (this.isDocumentVisible()) this.handleResumeSignal();
+    if (this.isDocumentVisible()) this.handleResumeSignal("visibility");
     else this.cancelScheduledRefresh();
   };
 
-  private handleResumeSignal(): void {
-    this.callbacks.onResumeSignal();
+  private handleResumeSignal(trigger: BrowserResumeTrigger): void {
+    this.callbacks.onResumeSignal(trigger);
     // WebKit may discard a queued animation frame while suspending an installed PWA.
     // Replace, rather than trust, any pre-suspension callback on every fresh resume signal.
     this.cancelScheduledRefresh();
