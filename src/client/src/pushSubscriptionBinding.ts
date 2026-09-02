@@ -76,8 +76,6 @@ export function pushSubscriptionRegistration(subscription: PushSubscriptionJSON,
 export class PushSubscriptionBinding {
   private desired: PushSubscriptionTarget | undefined;
   private lastSentKey: string | undefined;
-  /** Reuse the already-known endpoint during lifecycle transitions; PushManager lookups can stall iOS standalone WebViews. */
-  private cachedSubscription: PushSubscriptionJSON | null | undefined;
   private draining = false;
   private enabled: boolean;
   private readonly onError: (error: unknown) => void;
@@ -102,7 +100,6 @@ export class PushSubscriptionBinding {
   /** Call after enable only, so an existing endpoint is re-read instead of trusting stale local state. */
   invalidate(): void {
     this.lastSentKey = undefined;
-    this.cachedSubscription = undefined;
     if (this.enabled && this.desired !== undefined && !this.draining) void this.drain();
   }
 
@@ -114,13 +111,15 @@ export class PushSubscriptionBinding {
         const targetKey = JSON.stringify(target);
         if (targetKey === this.lastSentKey) break;
         try {
-          const subscription = await this.readSubscription();
+          const registration = await this.deps.getRegistration();
+          if (!this.isEnabled()) return;
+          const subscription = registration === undefined ? null : await registration.pushManager.getSubscription();
           if (!this.isEnabled()) return;
           if (subscription === null) {
             this.lastSentKey = targetKey;
             continue;
           }
-          await this.deps.subscribe(pushSubscriptionRegistration(subscription, this.deps.instanceId(), target));
+          await this.deps.subscribe(pushSubscriptionRegistration(subscription.toJSON(), this.deps.instanceId(), target));
           if (targetKey === JSON.stringify(this.desired)) this.lastSentKey = targetKey;
         } catch (error) {
           this.onError(error);
@@ -131,16 +130,6 @@ export class PushSubscriptionBinding {
       this.draining = false;
       if (this.enabled && this.desired !== undefined && JSON.stringify(this.desired) !== this.lastSentKey) void this.drain();
     }
-  }
-
-  private async readSubscription(): Promise<PushSubscriptionJSON | null> {
-    if (this.cachedSubscription !== undefined) return this.cachedSubscription;
-    const registration = await this.deps.getRegistration();
-    if (!this.isEnabled()) return null;
-    const subscription = registration === undefined ? null : await registration.pushManager.getSubscription();
-    if (!this.isEnabled()) return null;
-    this.cachedSubscription = subscription?.toJSON() ?? null;
-    return this.cachedSubscription;
   }
 
   private isEnabled(): boolean {

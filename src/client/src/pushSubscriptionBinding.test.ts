@@ -53,27 +53,6 @@ describe("PWA push subscription binding", () => {
     expect(harness.subscribe).toHaveBeenCalledWith({ ...SUBSCRIPTION, instanceId: "instance-1", ...TARGET });
   });
 
-  it("reuses the cached subscription when only the foreground session target changes", async () => {
-    const harness = bindingDependencies(true);
-    const binding = new PushSubscriptionBinding(harness.deps);
-
-    binding.sync(TARGET);
-    await vi.waitFor(() => { expect(harness.subscribe).toHaveBeenCalledOnce(); });
-    binding.sync({ ...TARGET, sessionId: "session-2", foreground: true });
-    await vi.waitFor(() => { expect(harness.subscribe).toHaveBeenCalledTimes(2); });
-
-    expect(harness.getRegistration).toHaveBeenCalledOnce();
-    expect(harness.getSubscription).toHaveBeenCalledOnce();
-    expect(harness.subscribe.mock.calls[1]?.[0]).toEqual({
-      ...SUBSCRIPTION,
-      instanceId: "instance-1",
-      sessionId: "session-2",
-      projectId: "project-1",
-      workspaceId: "workspace-1",
-      foreground: true,
-    });
-  });
-
   it("does not continue a pending Web Push lookup after the user disables push", async () => {
     let resolveRegistration: ((registration: BrowserRegistration) => void) | undefined;
     const registration = new Promise<BrowserRegistration>((resolve) => { resolveRegistration = resolve; });
