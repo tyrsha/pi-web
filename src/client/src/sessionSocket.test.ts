@@ -375,6 +375,26 @@ describe("socket instance isolation", () => {
     expect(newHandler).toHaveBeenCalledOnce();
   });
 
+  it("replaces an apparently open selected-session socket and treats the new open as a reconnect", () => {
+    const socket = new SessionSocket();
+    const onInitialOpen = vi.fn();
+    const onReconnect = vi.fn();
+    socket.connect({ id: "session-1", cwd: "/repo" }, vi.fn(), onReconnect, "local", onInitialOpen);
+    const oldSocket = FakeWebSocket.instances[0];
+    if (oldSocket === undefined) throw new Error("expected old session socket");
+    oldSocket.onopen?.();
+
+    socket.reconnect();
+
+    expect(oldSocket.readyState).toBe(3);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    const replacement = FakeWebSocket.instances[1];
+    if (replacement === undefined) throw new Error("expected replacement session socket");
+    replacement.onopen?.();
+    expect(onInitialOpen).toHaveBeenCalledOnce();
+    expect(onReconnect).toHaveBeenCalledOnce();
+  });
+
   it("does not attribute a queued global frame to a replacement machine", async () => {
     const socket = new RealtimeSocket();
     const oldHandler = vi.fn();
@@ -398,5 +418,23 @@ describe("socket instance isolation", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(newHandler).toHaveBeenCalledOnce();
+  });
+
+  it("replaces an apparently open global realtime socket without changing its handlers", () => {
+    const socket = new RealtimeSocket();
+    const onOpen = vi.fn();
+    socket.connect(vi.fn(), onOpen, "local");
+    const oldSocket = FakeWebSocket.instances[0];
+    if (oldSocket === undefined) throw new Error("expected old realtime socket");
+    oldSocket.onopen?.();
+
+    socket.reconnect();
+
+    expect(oldSocket.readyState).toBe(3);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    const replacement = FakeWebSocket.instances[1];
+    if (replacement === undefined) throw new Error("expected replacement realtime socket");
+    replacement.onopen?.();
+    expect(onOpen).toHaveBeenCalledTimes(2);
   });
 });

@@ -30,6 +30,7 @@ export interface SessionEventSocket {
     onInitialOpen?: () => void,
   ): void;
   setHandler(onEvent: (event: SessionUiEvent) => void): void;
+  reconnect?(): void;
   close(): void;
 }
 
@@ -171,6 +172,12 @@ export class SessionController {
     this.selectionSeq += 1;
     this.socket.close();
     this.clearPendingUpdates();
+  }
+
+  /** Replace a selected-session stream that may be half-open after browser suspension. */
+  reconnectSelectedSessionStream(): void {
+    if (this.disposed || this.getState().selectedSession === undefined) return;
+    this.socket.reconnect?.();
   }
 
   clearActiveSession() {

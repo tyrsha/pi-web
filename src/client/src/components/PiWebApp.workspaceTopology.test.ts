@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceController } from "../controllers/workspaceController";
+import { RealtimeSocket } from "../sessionSocket";
 import { PiWebApp } from "./PiWebApp";
 
 type RefreshCallback = () => void | Promise<void>;
@@ -56,6 +57,28 @@ describe("PiWebApp workspace topology refresh wiring", () => {
 
     expect(refreshTopology).toHaveBeenCalledOnce();
     expect(refreshSurface).toHaveBeenCalledOnce();
+  });
+
+  it("replaces selected-session and global event sockets before refreshing after resume", async () => {
+    const app = createApp();
+    stubBackgroundRefreshes(app);
+    const sessions: unknown = Reflect.get(app, "sessions");
+    if (!hasSessionResume(sessions)) throw new Error("PiWebApp SessionController resume seam was unavailable");
+    const reconnectSession = vi.spyOn(sessions, "reconnectSelectedSessionStream");
+    const realtime: unknown = Reflect.get(app, "realtime");
+    if (!(realtime instanceof RealtimeSocket)) throw new Error("PiWebApp realtime socket was unavailable");
+    const reconnectRealtime = vi.spyOn(realtime, "reconnect");
+    const remoteSocket = new RealtimeSocket();
+    const reconnectRemote = vi.spyOn(remoteSocket, "reconnect");
+    const machineSockets: unknown = Reflect.get(app, "machineRealtimeSockets");
+    if (!(machineSockets instanceof Map)) throw new Error("PiWebApp machine socket catalog was unavailable");
+    machineSockets.set("remote", remoteSocket);
+
+    await browserResumeRefresh(app)();
+
+    expect(reconnectSession).toHaveBeenCalledOnce();
+    expect(reconnectRealtime).toHaveBeenCalledOnce();
+    expect(reconnectRemote).toHaveBeenCalledOnce();
   });
 
   it("re-lists the selected project's workspaces on the plugin-facing app-data refresh", async () => {
@@ -161,4 +184,8 @@ function isRefreshCallback(value: unknown): value is RefreshCallback {
 
 function hasSelectedSessionRefresh(value: unknown): value is { refreshSelectedSession(): Promise<void> } {
   return typeof value === "object" && value !== null && "refreshSelectedSession" in value && typeof value.refreshSelectedSession === "function";
+}
+
+function hasSessionResume(value: unknown): value is { reconnectSelectedSessionStream(): void } {
+  return typeof value === "object" && value !== null && "reconnectSelectedSessionStream" in value && typeof value.reconnectSelectedSessionStream === "function";
 }

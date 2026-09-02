@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { BrowserResumeController } from "./browserResumeController";
+import { BROWSER_RESUME_FRAME_FALLBACK_MS, BrowserResumeController, scheduleBrowserFrame } from "./browserResumeController";
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolveDeferred: ((value: T) => void) | undefined;
@@ -18,14 +18,39 @@ function frameHarness() {
     },
     pendingCount: () => frames.filter((frame) => !frame.canceled).length,
     runNext: () => {
-      const frame = frames.shift();
-      if (frame === undefined) throw new Error("No scheduled frame");
-      if (!frame.canceled) frame.callback();
+      while (frames.length > 0) {
+        const frame = frames.shift();
+        if (frame !== undefined && !frame.canceled) {
+          frame.callback();
+          return;
+        }
+      }
+      throw new Error("No scheduled frame");
     },
   };
 }
 
 describe("BrowserResumeController", () => {
+  it("falls back to a timer when a resumed PWA never runs the queued animation frame", () => {
+    vi.useFakeTimers();
+    try {
+      const requestAnimationFrame = vi.fn(() => 7);
+      const cancelAnimationFrame = vi.fn();
+      vi.stubGlobal("window", { requestAnimationFrame, cancelAnimationFrame });
+      const callback = vi.fn();
+
+      scheduleBrowserFrame(callback);
+      vi.advanceTimersByTime(BROWSER_RESUME_FRAME_FALLBACK_MS);
+
+      expect(requestAnimationFrame).toHaveBeenCalledOnce();
+      expect(cancelAnimationFrame).toHaveBeenCalledWith(7);
+      expect(callback).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("batches overlapping focus and visible signals into one app refresh", async () => {
     const windowTarget = new EventTarget();
     const documentTarget = new EventTarget();
@@ -75,11 +100,71 @@ describe("BrowserResumeController", () => {
     windowTarget.dispatchEvent(new Event("focus"));
     expect(frames.pendingCount()).toBe(1);
     controller.disconnect();
-    frames.runNext();
+    expect(frames.pendingCount()).toBe(0);
     await Promise.resolve();
     windowTarget.dispatchEvent(new Event("focus"));
     expect(onResumeSignal).toHaveBeenCalledTimes(4);
     expect(refreshCalls).toBe(1);
+  });
+
+  it("treats pageshow and online as resume signals", async () => {
+    const windowTarget = new EventTarget();
+    const documentTarget = new EventTarget();
+    const frames = frameHarness();
+    const onResumeSignal = vi.fn();
+    const refreshAfterResume = vi.fn(() => Promise.resolve());
+    const controller = new BrowserResumeController({
+      onResumeSignal,
+      refreshAfterResume,
+      onRefreshError: (error) => { throw error; },
+    }, {
+      windowTarget,
+      documentTarget,
+      isDocumentVisible: () => true,
+      scheduleFrame: frames.scheduleFrame,
+    });
+    controller.connect();
+
+    windowTarget.dispatchEvent(new Event("pageshow"));
+    windowTarget.dispatchEvent(new Event("online"));
+    expect(onResumeSignal).toHaveBeenCalledTimes(2);
+    expect(frames.pendingCount()).toBe(1);
+    frames.runNext();
+    await Promise.resolve();
+    expect(refreshAfterResume).toHaveBeenCalledOnce();
+    controller.disconnect();
+  });
+
+  it("discards a pre-suspension frame and schedules fresh work when visibility returns", async () => {
+    const windowTarget = new EventTarget();
+    const documentTarget = new EventTarget();
+    const frames = frameHarness();
+    const refreshAfterResume = vi.fn(() => Promise.resolve());
+    let visible = true;
+    const controller = new BrowserResumeController({
+      onResumeSignal: () => undefined,
+      refreshAfterResume,
+      onRefreshError: (error) => { throw error; },
+    }, {
+      windowTarget,
+      documentTarget,
+      isDocumentVisible: () => visible,
+      scheduleFrame: frames.scheduleFrame,
+    });
+    controller.connect();
+
+    windowTarget.dispatchEvent(new Event("focus"));
+    visible = false;
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+    expect(frames.pendingCount()).toBe(0);
+
+    visible = true;
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+    expect(frames.pendingCount()).toBe(1);
+    frames.runNext();
+    await Promise.resolve();
+    expect(refreshAfterResume).toHaveBeenCalledOnce();
+    controller.disconnect();
   });
 
   it("runs one trailing refresh when another resume arrives during active work", async () => {

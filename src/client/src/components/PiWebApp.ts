@@ -291,11 +291,6 @@ export class PiWebApp extends LitElement {
       });
     });
   };
-  private readonly onPageShow = () => {
-    void this.sessionUnread.refreshAll();
-    this.appShell.repairViewportPosition();
-    this.retryPendingRemoteRouteRestoreSoon();
-  };
   private readonly onSystemLightThemeChange = () => {
     if (this.themePreference.auto) this.applyPreferredTheme(false);
   };
@@ -385,7 +380,6 @@ export class PiWebApp extends LitElement {
     this.unreadConnected = true;
     window.addEventListener("popstate", this.onPopState);
     window.addEventListener("message", this.onWindowMessage);
-    window.addEventListener("pageshow", this.onPageShow);
     if (typeof document.addEventListener === "function") document.addEventListener("visibilitychange", this.onPushVisibilityChange);
     this.browserResume.connect();
     window.addEventListener("keydown", this.onKeyDown, GLOBAL_SHORTCUT_LISTENER_OPTIONS);
@@ -407,7 +401,6 @@ export class PiWebApp extends LitElement {
     this.sessionUnread.retainMachines(new Set<string>());
     window.removeEventListener("popstate", this.onPopState);
     window.removeEventListener("message", this.onWindowMessage);
-    window.removeEventListener("pageshow", this.onPageShow);
     if (typeof document.removeEventListener === "function") document.removeEventListener("visibilitychange", this.onPushVisibilityChange);
     this.browserResume.disconnect();
     window.removeEventListener("keydown", this.onKeyDown, GLOBAL_SHORTCUT_LISTENER_OPTIONS);
@@ -486,6 +479,11 @@ export class PiWebApp extends LitElement {
   }
 
   private async refreshAfterBrowserResume(): Promise<void> {
+    // iOS can preserve an apparently OPEN WebSocket whose network path died while the PWA
+    // was suspended. Replace every live event stream before taking authoritative snapshots.
+    this.sessions.reconnectSelectedSessionStream();
+    this.realtime.reconnect();
+    for (const socket of this.machineRealtimeSockets.values()) socket.reconnect();
     await this.sessionUnread.refreshAll();
     await Promise.all([
       this.sessions.refreshSelectedSession(),

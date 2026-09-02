@@ -9,6 +9,9 @@ interface ScheduledFrame {
   cancel(): void;
 }
 
+/** WebKit can lose a queued animation frame while resuming a suspended standalone PWA. */
+export const BROWSER_RESUME_FRAME_FALLBACK_MS = 250;
+
 export interface BrowserResumeCallbacks {
   onResumeSignal(): void;
   refreshAfterResume(): void | Promise<void>;
@@ -42,30 +45,36 @@ export class BrowserResumeController {
   connect(): void {
     if (this.connected) return;
     this.connected = true;
-    this.windowTarget?.addEventListener("focus", this.onFocus);
+    this.windowTarget?.addEventListener("focus", this.onResumeEvent);
+    this.windowTarget?.addEventListener("online", this.onResumeEvent);
+    this.windowTarget?.addEventListener("pageshow", this.onResumeEvent);
     this.documentTarget?.addEventListener("visibilitychange", this.onVisibilityChange);
   }
 
   disconnect(): void {
     if (!this.connected) return;
     this.connected = false;
-    this.windowTarget?.removeEventListener("focus", this.onFocus);
+    this.windowTarget?.removeEventListener("focus", this.onResumeEvent);
+    this.windowTarget?.removeEventListener("online", this.onResumeEvent);
+    this.windowTarget?.removeEventListener("pageshow", this.onResumeEvent);
     this.documentTarget?.removeEventListener("visibilitychange", this.onVisibilityChange);
-    this.scheduledRefresh?.cancel();
-    this.scheduledRefresh = undefined;
+    this.cancelScheduledRefresh();
   }
 
-  private readonly onFocus: EventListener = () => {
+  private readonly onResumeEvent: EventListener = () => {
     this.handleResumeSignal();
   };
 
   private readonly onVisibilityChange: EventListener = () => {
     if (this.isDocumentVisible()) this.handleResumeSignal();
+    else this.cancelScheduledRefresh();
   };
 
   private handleResumeSignal(): void {
     this.callbacks.onResumeSignal();
-    if (this.scheduledRefresh !== undefined) return;
+    // WebKit may discard a queued animation frame while suspending an installed PWA.
+    // Replace, rather than trust, any pre-suspension callback on every fresh resume signal.
+    this.cancelScheduledRefresh();
     this.scheduledRefresh = this.scheduleFrame(() => {
       this.scheduledRefresh = undefined;
       if (!this.connected) return;
@@ -73,6 +82,11 @@ export class BrowserResumeController {
         if (this.connected) await this.callbacks.refreshAfterResume();
       }).catch((error: unknown) => { this.callbacks.onRefreshError(error); });
     });
+  }
+
+  private cancelScheduledRefresh(): void {
+    this.scheduledRefresh?.cancel();
+    this.scheduledRefresh = undefined;
   }
 }
 
@@ -88,11 +102,28 @@ function documentIsVisible(): boolean {
   return typeof document === "undefined" || document.visibilityState === "visible";
 }
 
-function scheduleBrowserFrame(callback: () => void): ScheduledFrame {
+export function scheduleBrowserFrame(callback: () => void): ScheduledFrame {
+  let completed = false;
+  let frame: number | undefined;
+  let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+  const run = () => {
+    if (completed) return;
+    completed = true;
+    if (frame !== undefined) window.cancelAnimationFrame(frame);
+    if (timer !== undefined) globalThis.clearTimeout(timer);
+    callback();
+  };
   if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-    const frame = window.requestAnimationFrame(() => { callback(); });
-    return { cancel: () => { window.cancelAnimationFrame(frame); } };
+    frame = window.requestAnimationFrame(run);
+    timer = globalThis.setTimeout(run, BROWSER_RESUME_FRAME_FALLBACK_MS);
+  } else {
+    timer = globalThis.setTimeout(run, 0);
   }
-  const timer = globalThis.setTimeout(callback, 0);
-  return { cancel: () => { globalThis.clearTimeout(timer); } };
+  return {
+    cancel: () => {
+      completed = true;
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      globalThis.clearTimeout(timer);
+    },
+  };
 }
