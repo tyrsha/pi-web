@@ -1,6 +1,7 @@
 import { css, html, nothing, LitElement, type TemplateResult } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { pushApi } from "../../api/clients";
+import { pwaPushInstanceId, pushSubscriptionRegistration } from "../../pushSubscriptionBinding";
 import { vapidKeyFromBase64Url } from "../../pushNotifications";
 import { settingsCardStyles } from "../shared";
 
@@ -29,6 +30,8 @@ function friendlyPushError(error: unknown): string {
  */
 @customElement("settings-push-notifications")
 export class SettingsPushNotifications extends LitElement {
+  /** Lets the app immediately refresh the selected-session mapping after enable/disable. */
+  @property({ attribute: false }) onSubscriptionChanged?: () => void;
   @state() private supported = false;
   @state() private permission: NotificationPermission | "unknown" = "unknown";
   @state() private hasSubscription = false;
@@ -77,7 +80,7 @@ export class SettingsPushNotifications extends LitElement {
       const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidKeyFromBase64Url(publicKey) });
       // toJSON() serializes to exactly { endpoint, expirationTime?, keys } — the shape the daemon stores.
       try {
-        await pushApi.subscribe(subscription.toJSON());
+        await pushApi.subscribe(pushSubscriptionRegistration(subscription.toJSON(), pwaPushInstanceId(), { foreground: false }));
       } catch (error) {
         try {
           await subscription.unsubscribe();
@@ -89,6 +92,7 @@ export class SettingsPushNotifications extends LitElement {
         throw error;
       }
       this.hasSubscription = true;
+      this.onSubscriptionChanged?.();
       this.message = "Push notifications are on — you will be notified when assistant replies arrive or a session errors.";
     } catch (error) {
       this.message = `Could not enable push: ${friendlyPushError(error)}`;
@@ -119,6 +123,7 @@ export class SettingsPushNotifications extends LitElement {
         }
       }
       this.hasSubscription = false;
+      this.onSubscriptionChanged?.();
       // Browsers do not offer programmatic permission revocation; only the OS-level delivery stops.
       this.message = "Push notifications are off.";
     } catch (error) {

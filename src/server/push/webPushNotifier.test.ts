@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SessionUiEvent } from "../../shared/apiTypes.js";
+import type { PushSubscriptionRecord } from "./pushSubscriptionStore.js";
 import { DEFAULT_PUSH_COOLDOWN_MS, PUSH_NOTIFICATION_BODY_MAX_CHARS, WebPushNotifier, pushMessageForSessionEvent, truncateForPush, type PushSender, type SessionDeepLinkTarget } from "./webPushNotifier.js";
 
 function assistantMessage(text: string): unknown {
@@ -14,8 +15,8 @@ class FakeSubscriptionStore {
     for (const endpoint of endpoints) this.records.set(endpoint, {});
   }
 
-  list(): { endpoint: string; expirationTime?: number | null; keys: Readonly<Record<string, string>> }[] {
-    return [...this.records.entries()].map(([endpoint, keys]) => ({ endpoint, keys }));
+  list(): PushSubscriptionRecord[] {
+    return [...this.records.entries()].map(([endpoint, keys]) => ({ endpoint, keys, instanceId: "instance-1", sessionId: "s1", foreground: false }));
   }
 
   remove(endpoint: string): boolean {
@@ -158,20 +159,32 @@ describe("WebPushNotifier", () => {
     expect(JSON.parse(harness.sent[0]?.payload ?? "{}")).toEqual({ title: "PI WEB", body: "done", data: { kind: "message", sessionId: "s1", cwd: "/repo/app" } });
   });
 
-  it("coalesces bursts within the cooldown window per session but not across sessions", async () => {
+  it("coalesces bursts and delivers only to the mapped session", async () => {
     const harness = createNotifier();
-    for (const sessionId of ["s1", "s2"]) {
-      harness.notifier.onSessionEvent(sessionId, { type: "message.end", message: assistantMessage("one") });
-      harness.advance(1_000);
-      harness.notifier.onSessionEvent(sessionId, { type: "message.end", message: assistantMessage("two") }); // throttled per session
-    }
+    harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("one") });
+    harness.advance(1_000);
+    harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("two") }); // throttled for the mapped session
+    harness.notifier.onSessionEvent("s2", { type: "message.end", message: assistantMessage("unmapped") }); // never delivered to this subscription
     await settle();
-    expect(harness.sent.map((entry) => sessionIdOfPayload(entry.payload))).toEqual(["s1", "s2"]);
+    expect(harness.sent.map((entry) => sessionIdOfPayload(entry.payload))).toEqual(["s1"]);
 
     harness.advance(DEFAULT_PUSH_COOLDOWN_MS);
     harness.notifier.onSessionEvent("s1", { type: "message.end", message: assistantMessage("three") });
     await settle();
-    expect(harness.sent).toHaveLength(3);
+    expect(harness.sent).toHaveLength(2);
+  });
+
+  it("sends one stop notification per run even if terminal events repeat", async () => {
+    const harness = createNotifier();
+    harness.notifier.onSessionEvent("s1", { type: "agent.end" });
+    harness.notifier.onSessionEvent("s1", { type: "agent.end" });
+    await settle();
+    expect(harness.sent).toHaveLength(1);
+
+    harness.notifier.onSessionEvent("s1", { type: "agent.start" });
+    harness.notifier.onSessionEvent("s1", { type: "agent.end" });
+    await settle();
+    expect(harness.sent).toHaveLength(2);
   });
 
   it("removes subscriptions the push service reports expired and logs other failures separately", async () => {
@@ -242,7 +255,7 @@ describe("WebPushNotifier", () => {
       },
     });
     expect(capturedListener).toBeTypeOf("function");
-    capturedListener?.("s9", { type: "message.end", message: assistantMessage("via hub") });
+    capturedListener?.("s1", { type: "message.end", message: assistantMessage("via hub") });
     await settle();
     expect(harness.sent).toHaveLength(1);
     stop();

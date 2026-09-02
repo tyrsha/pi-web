@@ -1,13 +1,14 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { PushSubscriptionRegistration } from "../../pushSubscriptionBinding.js";
 import { vapidKeyFromBase64Url } from "../../pushNotifications.js";
 import { SettingsPushNotifications } from "./SettingsPushNotifications.js";
 
 const pushApiMock = vi.hoisted(() => ({
-  vapidPublicKey: vi.fn(),
-  subscribe: vi.fn(),
-  unsubscribe: vi.fn(),
+  vapidPublicKey: vi.fn<() => Promise<{ publicKey: string }>>(),
+  subscribe: vi.fn<(subscription: PushSubscriptionRegistration) => Promise<unknown>>(),
+  unsubscribe: vi.fn<(subscription: PushSubscriptionJSON) => Promise<unknown>>(),
 }));
 
 vi.mock("../../api/clients", async (importOriginal) => {
@@ -68,6 +69,7 @@ function restoreBrowserGlobals(): void {
 
 afterEach(() => {
   document.body.replaceChildren();
+  localStorage.clear();
   pushApiMock.vapidPublicKey.mockReset();
   pushApiMock.subscribe.mockReset();
   pushApiMock.unsubscribe.mockReset();
@@ -126,7 +128,12 @@ describe("settings-push-notifications", () => {
     await flushAsyncWork();
 
     expect(pushApiMock.vapidPublicKey).toHaveBeenCalledOnce();
-    expect(pushApiMock.subscribe).toHaveBeenCalledWith(SUBSCRIPTION_JSON);
+    expect(pushApiMock.subscribe).toHaveBeenCalledOnce();
+    const registered = pushApiMock.subscribe.mock.calls[0]?.[0];
+    expect(registered?.endpoint).toBe(SUBSCRIPTION_JSON.endpoint);
+    expect(registered?.keys).toEqual(SUBSCRIPTION_JSON.keys);
+    expect(registered?.instanceId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(registered?.foreground).toBe(false);
     // The application server key reached the browser API decoded, not as raw base64url text.
     expect(swFakes.receivedOptions).toHaveLength(1);
     expect(swFakes.receivedOptions[0]?.userVisibleOnly).toBe(true);
