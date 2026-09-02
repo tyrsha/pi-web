@@ -39,6 +39,7 @@
 - [x] iOS PWA 복귀 시 selected-session/global WebSocket을 교체하고 HTTP snapshot과 합류
 - [x] `pageshow`, `online`, hidden→visible에서 유실된 resume frame을 폐기하고 새 refresh 예약
 - [x] hidden 상태의 iOS `pageshow`/`online`은 무시하고 실제 visible 전환 뒤에만 socket·HTTP refresh 실행
+- [x] focus·visibility가 연속 발생해도 실행 중인 resume refresh를 trailing duplicate로 재실행하지 않음
 - [x] iOS PWA resume의 단계별 content-free 진단 breadcrumb를 서버 journal에 기록
 - [x] HTTPS, 브라우저 권한, service worker 조건에 맞는 오류 메시지 제공
 

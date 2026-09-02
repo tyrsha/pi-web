@@ -1,5 +1,3 @@
-import { TrailingRefreshCoordinator } from "../controllers/trailingRefreshCoordinator";
-
 interface BrowserEventTarget {
   addEventListener(type: string, listener: EventListener): void;
   removeEventListener(type: string, listener: EventListener): void;
@@ -33,9 +31,9 @@ export class BrowserResumeController {
   private readonly documentTarget: BrowserEventTarget | undefined;
   private readonly isDocumentVisible: () => boolean;
   private readonly scheduleFrame: (callback: () => void) => ScheduledFrame;
-  private readonly refreshes = new TrailingRefreshCoordinator<"browser-resume">();
   private scheduledRefresh: ScheduledFrame | undefined;
   private connected = false;
+  private refreshing = false;
 
   constructor(private readonly callbacks: BrowserResumeCallbacks, options: BrowserResumeControllerOptions = {}) {
     this.windowTarget = options.windowTarget ?? browserWindowTarget();
@@ -86,10 +84,13 @@ export class BrowserResumeController {
     this.cancelScheduledRefresh();
     this.scheduledRefresh = this.scheduleFrame(() => {
       this.scheduledRefresh = undefined;
-      if (!this.connected) return;
-      void this.refreshes.request("browser-resume", async () => {
-        if (this.connected) await this.callbacks.refreshAfterResume();
-      }).catch((error: unknown) => { this.callbacks.onRefreshError(error); });
+      // Focus and visibility usually arrive together on iOS. One authoritative
+      // refresh is enough; a trailing duplicate immediately reopens every socket.
+      if (!this.connected || this.refreshing) return;
+      this.refreshing = true;
+      void Promise.resolve(this.callbacks.refreshAfterResume())
+        .catch((error: unknown) => { this.callbacks.onRefreshError(error); })
+        .finally(() => { this.refreshing = false; });
     });
   }
 
