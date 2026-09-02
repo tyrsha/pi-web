@@ -6,7 +6,6 @@ import { groupChatMessages, summarizeChatGroup, type ChatGroup } from "../chatGr
 import { writeClipboardText } from "../clipboard";
 import { capturePrependScrollAnchor, PREPEND_RESTORE_SETTLE_FRAMES, restorePrependScrollAnchor, type PrependScrollAnchor } from "../chatScrollAnchoring";
 import { shouldRequestEarlierMessages } from "../chatHistoryLoading";
-import { ScrollIdleTracker } from "../scrollIdle";
 import { ChatScrollController, distanceFromScrollBottom, findFirstVisibleArticle, isNearScrollBottom, type ChatAnchorScrollPosition, type ChatScrollRestoreResult } from "../chatScrollPosition";
 import type { AskUserSubmission, PendingAskUser, PendingExtensionDialog, QueuedSessionMessage, SessionActivity, SessionStatus, SessionWarningSeverity } from "../api";
 import type { ClosedExtensionDialog } from "../appState";
@@ -227,7 +226,6 @@ export class ChatView extends LitElement {
   private imageZoomModalRegistration: RenderedModalRegistration | undefined;
   private readonly disclosures = new ChatDisclosureController();
   private readonly scrollController = new ChatScrollController();
-  private readonly scrollIdleTracker = new ScrollIdleTracker();
   private suppressScrollSave = false;
   private suppressLoadMoreRequests = false;
   private loadMoreCheckFrame: number | undefined;
@@ -245,8 +243,6 @@ export class ChatView extends LitElement {
   private touchStartY: number | undefined;
   private pendingScrollRestoreSessionId: string | undefined;
   private pendingScrollRestorePosition: ChatAnchorScrollPosition | undefined;
-  private pendingRailIndex: number | undefined;
-  private railIdleWaitPending = false;
   private restoreScrollFrame: number | undefined;
   private prependRestoreToken = 0;
   @state() private loadMoreRequested = false;
@@ -291,7 +287,6 @@ export class ChatView extends LitElement {
     this.saveScrollPosition();
     this.scrollController.dispose();
     this.releaseImageZoomModal();
-    this.scrollIdleTracker.dispose();
     this.prependRestoreToken += 1;
     if (this.restoreScrollFrame !== undefined) cancelAnimationFrame(this.restoreScrollFrame);
     if (this.loadMoreCheckFrame !== undefined) cancelAnimationFrame(this.loadMoreCheckFrame);
@@ -325,8 +320,6 @@ export class ChatView extends LitElement {
     this.suppressLoadMoreRequests = false;
     this.pendingScrollRestoreSessionId = undefined;
     this.pendingScrollRestorePosition = undefined;
-    this.pendingRailIndex = undefined;
-    this.scrollIdleTracker.flushWaiters();
     this.prependRestoreToken += 1;
     if (this.restoreScrollFrame !== undefined) {
       cancelAnimationFrame(this.restoreScrollFrame);
@@ -425,7 +418,7 @@ export class ChatView extends LitElement {
       ${this.renderNotificationLiveRegions()}
       <div class="chat-wrap">
         ${this.renderConversationRail()}
-        <div class="chat" @scroll=${() => { this.onScroll(); }} @wheel=${(event: WheelEvent) => { this.onWheel(event); }} @touchstart=${(event: TouchEvent) => { this.onTouchStart(event); }} @touchmove=${(event: TouchEvent) => { this.onTouchMove(event); }} @touchend=${() => { this.onTouchScrollEnd(); }} @touchcancel=${() => { this.onTouchScrollEnd(); }}>
+        <div class="chat" @scroll=${() => { this.onScroll(); }} @wheel=${(event: WheelEvent) => { this.onWheel(event); }} @touchstart=${(event: TouchEvent) => { this.onTouchStart(event); }} @touchmove=${(event: TouchEvent) => { this.onTouchMove(event); }}>
           ${this.renderHistoryBoundary()}
           ${repeat(
             groups,
@@ -1011,7 +1004,6 @@ export class ChatView extends LitElement {
   }
 
   private onScroll() {
-    this.scrollIdleTracker.noteScrollActivity();
     this.requestLoadMoreIfNeeded();
     this.updatePinnedToBottomFromScroll();
     this.scheduleConversationRailUpdate();
@@ -1023,21 +1015,7 @@ export class ChatView extends LitElement {
   }
 
   private onTouchStart(event: TouchEvent) {
-    this.scrollIdleTracker.noteTouchStart();
     this.touchStartY = event.touches[0]?.clientY;
-  }
-
-  private onTouchScrollEnd() {
-    this.scrollIdleTracker.noteTouchEnd();
-  }
-
-  /**
-   * Resolves once the chat scroll is idle (no active touch and scroll events
-   * settled). Callers applying history prepends await this so the prepend's
-   * scrollTop corrections do not cancel an in-flight touch/momentum scroll.
-   */
-  whenScrollIdle(): Promise<void> {
-    return this.scrollIdleTracker.whenIdle();
   }
 
   private onTouchMove(event: TouchEvent) {
@@ -1322,27 +1300,11 @@ export class ChatView extends LitElement {
     const total = this.conversationDisplayTotal();
     const article = this.firstVisibleArticle();
     const index = Number(article?.dataset["index"]);
-    const next = Number.isFinite(index)
-      ? clampNumber(index, 0, Math.max(0, total - 1))
-      : clampNumber(this.pinnedToBottom ? this.messageStart + this.messages.length - 1 : this.messageStart, 0, Math.max(0, total - 1));
-    if (next === this.currentConversationIndex) return;
-    // Repainting the position indicator mid-gesture cancels iOS touch
-    // scrolling (the meter overlaps the top edge of the scrollport), so while
-    // a touch/momentum scroll is in flight the commit waits for the scroll to
-    // settle.
-    if (this.scrollIdleTracker.isIdle) {
-      this.currentConversationIndex = next;
+    if (Number.isFinite(index)) {
+      this.currentConversationIndex = clampNumber(index, 0, Math.max(0, total - 1));
       return;
     }
-    this.pendingRailIndex = next;
-    if (this.railIdleWaitPending) return;
-    this.railIdleWaitPending = true;
-    void this.scrollIdleTracker.whenIdle().then(() => {
-      this.railIdleWaitPending = false;
-      const pending = this.pendingRailIndex;
-      this.pendingRailIndex = undefined;
-      if (pending !== undefined && pending !== this.currentConversationIndex) this.currentConversationIndex = pending;
-    });
+    this.currentConversationIndex = clampNumber(this.pinnedToBottom ? this.messageStart + this.messages.length - 1 : this.messageStart, 0, Math.max(0, total - 1));
   }
 
   private scrollMarkers(): HTMLElement[] {
