@@ -24,6 +24,8 @@
 - [x] Push 전송 시 현재 이벤트의 `sessionId`와 구독의 세션 매핑을 비교
 - [x] foreground 상태인 PWA에는 백그라운드 알림을 보내지 않도록 필터링
 - [x] 반복된 `agent.end` 이벤트는 실행당 한 번만 종료 알림 전송
+- [x] run 안의 중간 assistant `message.end`는 Push로 보내지 않고 마지막 응답만 보류
+- [x] 새 메시지로 다음 run이 즉시 시작되면 대기 중인 완료 알림 취소
 - [x] `agent.start` 이벤트에서 해당 세션의 종료 알림 상태 초기화
 
 ### 클라이언트 및 설정 UI
@@ -33,6 +35,7 @@
 - [x] 기존 브라우저 subscription을 현재 선택 세션에 매핑하는 `PushSubscriptionBinding` 추가
 - [x] 세션 변경 및 foreground/background 전환 시 서버 매핑 동기화
 - [x] Push 활성화·비활성화 후 매핑을 즉시 갱신
+- [x] Push 비활성 PWA는 복귀 시 service worker/PushManager API를 조회하지 않음
 - [x] HTTPS, 브라우저 권한, service worker 조건에 맞는 오류 메시지 제공
 
 ### 운영 환경
@@ -58,7 +61,9 @@
 - v2 subscription store 저장·재로드·legacy 거부
 - 세션별 Push 대상 필터링
 - 반복 종료 이벤트 중복 방지
+- run 완료 전 중간 assistant 응답 Push 억제 및 queued follow-up 취소
 - Push 설정 UI의 등록·롤백·비활성화
+- Push 비활성 복귀 시 Web Push 조회 차단
 
 ### 개발 런타임
 
@@ -69,7 +74,7 @@
 - [x] 현재 저장된 구독에 `instanceId`, `sessionId`, `foreground` 매핑이 존재함
 - [x] Web Push 전송 요청이 Push 서비스에서 `201 Accepted` 응답을 받는 것 확인
 
-현재 개발 subscription 저장 상태는 v2이며, scoped subscription 1개가 저장되어 있습니다. 기존 v1 구독은 더 이상 전체 세션 fallback으로 사용되지 않습니다.
+현재 개발 subscription 저장 상태는 v2이며, 두 PWA instance의 scoped subscription이 저장되어 있습니다. 기존 v1 구독은 더 이상 전체 세션 fallback으로 사용되지 않습니다.
 
 ## 4. 남은 확인 및 제한사항
 

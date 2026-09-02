@@ -1,7 +1,7 @@
 import { css, html, nothing, LitElement, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { pushApi } from "../../api/clients";
-import { pwaPushInstanceId, pushSubscriptionRegistration } from "../../pushSubscriptionBinding";
+import { pwaPushInstanceId, pushSubscriptionRegistration, setPwaPushSubscriptionEnabled } from "../../pushSubscriptionBinding";
 import { vapidKeyFromBase64Url } from "../../pushNotifications";
 import { settingsCardStyles } from "../shared";
 
@@ -31,7 +31,7 @@ function friendlyPushError(error: unknown): string {
 @customElement("settings-push-notifications")
 export class SettingsPushNotifications extends LitElement {
   /** Lets the app immediately refresh the selected-session mapping after enable/disable. */
-  @property({ attribute: false }) onSubscriptionChanged?: () => void;
+  @property({ attribute: false }) onSubscriptionChanged?: (enabled: boolean) => void;
   @state() private supported = false;
   @state() private permission: NotificationPermission | "unknown" = "unknown";
   @state() private hasSubscription = false;
@@ -51,7 +51,12 @@ export class SettingsPushNotifications extends LitElement {
     if (!this.supported || !("serviceWorker" in navigator)) return;
     try {
       const registration = await navigator.serviceWorker.getRegistration();
-      this.hasSubscription = registration === undefined ? false : (await registration.pushManager.getSubscription()) !== null;
+      const enabled = registration !== undefined && (await registration.pushManager.getSubscription()) !== null;
+      this.hasSubscription = enabled;
+      // Migrate pre-preference subscriptions only when the user explicitly opens this Push card;
+      // normal startup/resume must not probe Web Push APIs in a disabled iOS PWA.
+      setPwaPushSubscriptionEnabled(enabled);
+      this.onSubscriptionChanged?.(enabled);
     } catch {
       this.hasSubscription = false; // A missing worker (e.g. registration failed) means push cannot be active.
     }
@@ -92,7 +97,8 @@ export class SettingsPushNotifications extends LitElement {
         throw error;
       }
       this.hasSubscription = true;
-      this.onSubscriptionChanged?.();
+      setPwaPushSubscriptionEnabled(true);
+      this.onSubscriptionChanged?.(true);
       this.message = "Push notifications are on — you will be notified when assistant replies arrive or a session errors.";
     } catch (error) {
       this.message = `Could not enable push: ${friendlyPushError(error)}`;
@@ -113,6 +119,8 @@ export class SettingsPushNotifications extends LitElement {
         // remount must observe no subscription or the card would flip back to "enabled".
         await subscription.unsubscribe();
         this.hasSubscription = false;
+        setPwaPushSubscriptionEnabled(false);
+        this.onSubscriptionChanged?.(false);
         // Server removal is bookkeeping. If it fails, the stale endpoint self-heals: the notifier drops
         // subscriptions the push service reports expired (404/410) on the next delivery attempt.
         try {
@@ -121,9 +129,11 @@ export class SettingsPushNotifications extends LitElement {
           this.message = `Push is off in this browser, but server cleanup failed: ${friendlyPushError(error)}`;
           return;
         }
+      } else {
+        this.hasSubscription = false;
+        setPwaPushSubscriptionEnabled(false);
+        this.onSubscriptionChanged?.(false);
       }
-      this.hasSubscription = false;
-      this.onSubscriptionChanged?.();
       // Browsers do not offer programmatic permission revocation; only the OS-level delivery stops.
       this.message = "Push notifications are off.";
     } catch (error) {

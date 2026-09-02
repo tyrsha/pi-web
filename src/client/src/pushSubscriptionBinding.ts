@@ -23,10 +23,14 @@ export interface PushSubscriptionBindingDependencies {
   readonly getRegistration: () => Promise<ServiceWorkerRegistrationLike | undefined>;
   readonly subscribe: (subscription: PushSubscriptionRegistration) => Promise<unknown>;
   readonly instanceId: () => string;
+  readonly isEnabled: () => boolean;
   readonly onError?: (error: unknown) => void;
 }
 
 const PUSH_INSTANCE_ID_KEY = "pi-web.push.instance-id";
+const PUSH_SUBSCRIPTION_ENABLED_KEY = "pi-web.push.subscription-enabled";
+
+type PushStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 /** One stable identifier per browser/PWA storage partition. Installed iOS PWAs have their own storage, so each installation gets its own id. */
 export function pwaPushInstanceId(storage: Pick<Storage, "getItem" | "setItem"> = localStorage, randomId: () => string = () => crypto.randomUUID()): string {
@@ -35,6 +39,22 @@ export function pwaPushInstanceId(storage: Pick<Storage, "getItem" | "setItem"> 
   const instanceId = randomId();
   storage.setItem(PUSH_INSTANCE_ID_KEY, instanceId);
   return instanceId;
+}
+
+/** Persist the user's explicit local choice, so a disabled PWA never probes Web Push APIs on resume. */
+export function setPwaPushSubscriptionEnabled(enabled: boolean, storage?: PushStorage): void {
+  const target = storage ?? browserPushStorage();
+  if (target === undefined) return;
+  if (enabled) target.setItem(PUSH_SUBSCRIPTION_ENABLED_KEY, "true");
+  else target.removeItem(PUSH_SUBSCRIPTION_ENABLED_KEY);
+}
+
+export function isPwaPushSubscriptionEnabled(storage?: Pick<Storage, "getItem">): boolean {
+  return (storage ?? browserPushStorage())?.getItem(PUSH_SUBSCRIPTION_ENABLED_KEY) === "true";
+}
+
+function browserPushStorage(): Storage | undefined {
+  return typeof localStorage === "undefined" ? undefined : localStorage;
 }
 
 export function pushSubscriptionRegistration(subscription: PushSubscriptionJSON, instanceId: string, target: PushSubscriptionTarget): PushSubscriptionRegistration {
@@ -57,33 +77,44 @@ export class PushSubscriptionBinding {
   private desired: PushSubscriptionTarget | undefined;
   private lastSentKey: string | undefined;
   private draining = false;
+  private enabled: boolean;
   private readonly onError: (error: unknown) => void;
 
   constructor(private readonly deps: PushSubscriptionBindingDependencies = browserBindingDependencies()) {
+    this.enabled = deps.isEnabled();
     this.onError = deps.onError ?? (() => undefined);
   }
 
   sync(target: PushSubscriptionTarget): void {
     this.desired = target;
-    if (!this.draining) void this.drain();
+    if (this.enabled && !this.draining) void this.drain();
   }
 
-  /** Call after an enable/disable operation so an existing endpoint is re-read instead of trusting stale local state. */
+  /** Enables mapping only after an explicit successful subscription; disabling avoids all Web Push API work. */
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    this.lastSentKey = undefined;
+    if (enabled && this.desired !== undefined && !this.draining) void this.drain();
+  }
+
+  /** Call after enable only, so an existing endpoint is re-read instead of trusting stale local state. */
   invalidate(): void {
     this.lastSentKey = undefined;
-    if (this.desired !== undefined && !this.draining) void this.drain();
+    if (this.enabled && this.desired !== undefined && !this.draining) void this.drain();
   }
 
   private async drain(): Promise<void> {
     this.draining = true;
     try {
-      while (this.desired !== undefined) {
+      while (this.enabled && this.desired !== undefined) {
         const target = this.desired;
         const targetKey = JSON.stringify(target);
         if (targetKey === this.lastSentKey) break;
         try {
           const registration = await this.deps.getRegistration();
+          if (!this.isEnabled()) return;
           const subscription = registration === undefined ? null : await registration.pushManager.getSubscription();
+          if (!this.isEnabled()) return;
           if (subscription === null) {
             this.lastSentKey = targetKey;
             continue;
@@ -97,8 +128,12 @@ export class PushSubscriptionBinding {
       }
     } finally {
       this.draining = false;
-      if (this.desired !== undefined && JSON.stringify(this.desired) !== this.lastSentKey) void this.drain();
+      if (this.enabled && this.desired !== undefined && JSON.stringify(this.desired) !== this.lastSentKey) void this.drain();
     }
+  }
+
+  private isEnabled(): boolean {
+    return this.enabled;
   }
 }
 
@@ -107,5 +142,6 @@ function browserBindingDependencies(): PushSubscriptionBindingDependencies {
     getRegistration: async () => "serviceWorker" in navigator ? await navigator.serviceWorker.getRegistration() ?? undefined : undefined,
     subscribe: (subscription) => pushApi.subscribe(subscription),
     instanceId: () => pwaPushInstanceId(),
+    isEnabled: () => isPwaPushSubscriptionEnabled(),
   };
 }

@@ -7,10 +7,13 @@ export interface PushEventSource { subscribe(listener: (sessionId: string, event
 const PUSH_NOTIFICATION_TITLE = "PI WEB";
 export const PUSH_NOTIFICATION_BODY_MAX_CHARS = 200;
 export const DEFAULT_PUSH_COOLDOWN_MS = 30_000;
+/** A queued follow-up prompt ends one run immediately before starting the next; wait before calling it stopped. */
+export const STOPPED_NOTIFICATION_DELAY_MS = 1_000;
 export interface SessionDeepLinkTarget { readonly projectId: string; readonly workspaceId: string; }
 export interface WebPushNotifierOptions {
   readonly subscriptions: Pick<PushSubscriptionStore, "list" | "remove">;
   readonly cooldownMs?: number | undefined;
+  readonly completionDelayMs?: number | undefined;
   readonly now?: (() => number) | undefined;
   readonly onError?: ((message: string) => void) | undefined;
   readonly resolveCwd?: ((sessionId: string) => string | undefined) | undefined;
@@ -20,14 +23,19 @@ export interface WebPushNotifierOptions {
 /** Delivers only to background PWA instances currently mapped to the emitting session. */
 export class WebPushNotifier {
   private readonly cooldownMs: number;
+  private readonly completionDelayMs: number;
   private readonly now: () => number;
   private readonly onError: (message: string) => void;
   private readonly lastSentAt = new Map<string, number>();
   /** A session can emit repeated terminal events while a run settles; notify once until the next run starts. */
   private readonly stoppedSessions = new Set<string>();
+  private readonly pendingCompletionNotifications = new Map<string, ReturnType<typeof setTimeout>>();
+  /** An agent may end several assistant messages around tool calls; only its last visible result is notify-worthy. */
+  private readonly lastAssistantMessages = new Map<string, PushNotificationMessage>();
 
   constructor(readonly send: PushSender, private readonly options: WebPushNotifierOptions) {
     this.cooldownMs = options.cooldownMs ?? DEFAULT_PUSH_COOLDOWN_MS;
+    this.completionDelayMs = options.completionDelayMs ?? STOPPED_NOTIFICATION_DELAY_MS;
     this.now = options.now ?? Date.now;
     this.onError = options.onError ?? (() => undefined);
   }
@@ -35,16 +43,42 @@ export class WebPushNotifier {
   onSessionEvent(sessionId: string, event: SessionUiEvent): void {
     if (event.type === "agent.start") {
       this.stoppedSessions.delete(sessionId);
+      this.lastAssistantMessages.delete(sessionId);
+      this.cancelPendingCompletionNotification(sessionId);
+      return;
+    }
+    if (event.type === "agent.end") {
+      this.scheduleCompletionNotification(sessionId);
       return;
     }
 
     const message = pushMessageForSessionEvent(event);
     if (message === undefined) return;
-    if (message.kind === "stopped") {
-      if (this.stoppedSessions.has(sessionId)) return;
-      this.stoppedSessions.add(sessionId);
+    if (message.kind === "message") {
+      this.lastAssistantMessages.set(sessionId, message);
+      return;
     }
+    this.deliverIfAllowed(message, sessionId);
+  }
+  private scheduleCompletionNotification(sessionId: string): void {
+    if (this.stoppedSessions.has(sessionId)) return;
+    this.stoppedSessions.add(sessionId);
+    const message = this.lastAssistantMessages.get(sessionId) ?? { title: PUSH_NOTIFICATION_TITLE, body: "Agent stopped", kind: "stopped" } satisfies PushNotificationMessage;
+    this.lastAssistantMessages.delete(sessionId);
+    this.pendingCompletionNotifications.set(sessionId, setTimeout(() => {
+      this.pendingCompletionNotifications.delete(sessionId);
+      this.deliverIfAllowed(message, sessionId);
+    }, this.completionDelayMs));
+  }
 
+  private cancelPendingCompletionNotification(sessionId: string): void {
+    const timer = this.pendingCompletionNotifications.get(sessionId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    this.pendingCompletionNotifications.delete(sessionId);
+  }
+
+  private deliverIfAllowed(message: PushNotificationMessage, sessionId: string): void {
     // Input waits must not be suppressed by an immediately preceding completion; throttle independently by kind.
     const key = `${sessionId}\u0000${message.kind}`;
     const now = this.now();
@@ -52,6 +86,7 @@ export class WebPushNotifier {
     this.lastSentAt.set(key, now);
     void this.deliver(message, sessionId);
   }
+
   private async deliver(message: PushNotificationMessage, sessionId: string): Promise<void> {
     const cwd = this.options.resolveCwd?.(sessionId);
     let deepLink: SessionDeepLinkTarget | undefined;
