@@ -10,7 +10,7 @@ interface ScheduledFrame {
 /** WebKit can lose a queued animation frame while resuming a suspended standalone PWA. */
 export const BROWSER_RESUME_FRAME_FALLBACK_MS = 250;
 
-export type BrowserResumeTrigger = "focus" | "online" | "pageshow" | "visibility";
+export type BrowserResumeTrigger = "focus" | "online" | "visibility";
 
 export interface BrowserResumeCallbacks {
   onResumeSignal(trigger: BrowserResumeTrigger): void;
@@ -47,7 +47,6 @@ export class BrowserResumeController {
     this.connected = true;
     this.windowTarget?.addEventListener("focus", this.onResumeEvent);
     this.windowTarget?.addEventListener("online", this.onResumeEvent);
-    this.windowTarget?.addEventListener("pageshow", this.onResumeEvent);
     this.documentTarget?.addEventListener("visibilitychange", this.onVisibilityChange);
   }
 
@@ -56,14 +55,13 @@ export class BrowserResumeController {
     this.connected = false;
     this.windowTarget?.removeEventListener("focus", this.onResumeEvent);
     this.windowTarget?.removeEventListener("online", this.onResumeEvent);
-    this.windowTarget?.removeEventListener("pageshow", this.onResumeEvent);
     this.documentTarget?.removeEventListener("visibilitychange", this.onVisibilityChange);
     this.cancelScheduledRefresh();
   }
 
   private readonly onResumeEvent: EventListener = (event) => {
-    if (event.type !== "focus" && event.type !== "online" && event.type !== "pageshow") return;
-    // iOS standalone PWAs can dispatch pageshow before visibility becomes visible.
+    if (event.type !== "focus" && event.type !== "online") return;
+    // iOS can deliver focus/online while the standalone PWA is still hidden.
     // Refreshing then churns sockets and HTTP while WebKit still suspends the page.
     if (!this.isDocumentVisible()) {
       this.cancelScheduledRefresh();

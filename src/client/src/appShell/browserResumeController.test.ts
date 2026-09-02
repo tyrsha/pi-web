@@ -108,7 +108,7 @@ describe("BrowserResumeController", () => {
     expect(refreshCalls).toBe(1);
   });
 
-  it("treats pageshow and online as resume signals", async () => {
+  it("ignores initial pageshow and treats online as a resume signal", async () => {
     const windowTarget = new EventTarget();
     const documentTarget = new EventTarget();
     const frames = frameHarness();
@@ -128,7 +128,8 @@ describe("BrowserResumeController", () => {
 
     windowTarget.dispatchEvent(new Event("pageshow"));
     windowTarget.dispatchEvent(new Event("online"));
-    expect(onResumeSignal).toHaveBeenCalledTimes(2);
+    expect(onResumeSignal).toHaveBeenCalledOnce();
+    expect(onResumeSignal).toHaveBeenCalledWith("online");
     expect(frames.pendingCount()).toBe(1);
     frames.runNext();
     await Promise.resolve();

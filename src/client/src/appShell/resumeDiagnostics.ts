@@ -37,11 +37,24 @@ export interface ResumeDiagnosticsDependencies {
   readonly isOnline: () => boolean;
 }
 
+interface ResumeDiagnosticRecord {
+  pageId: string;
+  sequence: number;
+  event: ResumeDiagnosticEvent;
+  visible: boolean;
+  online: boolean;
+  elapsedMs: number;
+}
+
+const RESUME_DIAGNOSTIC_BATCH_DELAY_MS = 100;
+
 /** Emits bounded, content-free resume breadcrumbs so an on-device iOS stall can be reconstructed from server logs. */
 export class ResumeDiagnostics {
   private readonly startedAt: number;
   private sequence = 0;
   private enabled = false;
+  private queued: ResumeDiagnosticRecord[] = [];
+  private flushTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
 
   constructor(private readonly deps: ResumeDiagnosticsDependencies = browserResumeDiagnosticsDependencies()) {
     this.startedAt = deps.now();
@@ -54,14 +67,25 @@ export class ResumeDiagnostics {
   record(event: ResumeDiagnosticEvent): void {
     if (!this.enabled) return;
     this.sequence += 1;
-    this.deps.send(JSON.stringify({
+    this.queued.push({
       pageId: this.deps.pageId(),
       sequence: this.sequence,
       event,
       visible: this.deps.isVisible(),
       online: this.deps.isOnline(),
       elapsedMs: Math.max(0, Math.round(this.deps.now() - this.startedAt)),
-    }));
+    });
+    if (event === "suspend") this.flush();
+    else this.flushTimer ??= globalThis.setTimeout(() => { this.flush(); }, RESUME_DIAGNOSTIC_BATCH_DELAY_MS);
+  }
+
+  private flush(): void {
+    if (this.flushTimer !== undefined) globalThis.clearTimeout(this.flushTimer);
+    this.flushTimer = undefined;
+    if (this.queued.length === 0) return;
+    const events = this.queued;
+    this.queued = [];
+    this.deps.send(JSON.stringify({ events }));
   }
 }
 
