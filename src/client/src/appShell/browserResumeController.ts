@@ -11,7 +11,7 @@ interface ScheduledFrame {
 export const BROWSER_RESUME_FRAME_FALLBACK_MS = 250;
 
 /** A resume refresh must never wedge later resumes: one hung fetch used to pin `refreshing`. */
-export const BROWSER_RESUME_REFRESH_TIMEOUT_MS = 20_000;
+export const BROWSER_RESUME_REFRESH_TIMEOUT_MS = 5_000;
 
 export type BrowserResumeTrigger = "focus" | "online" | "visibility";
 

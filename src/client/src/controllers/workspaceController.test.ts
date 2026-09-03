@@ -3,7 +3,7 @@ import type { AppState } from "../appState";
 import { initialAppState } from "../appState";
 import type { Machine, MessagePage, Project, SessionInfo, SessionRef, Workspace } from "../api";
 import type { SessionController } from "./sessionController";
-import { WorkspaceController } from "./workspaceController";
+import { TOPOLOGY_REFRESH_TIMEOUT_MS, WorkspaceController } from "./workspaceController";
 
 function machine(id: string): Machine {
   return { id, name: id, kind: id === "local" ? "local" : "remote", createdAt: "now", updatedAt: "now" };
@@ -249,6 +249,44 @@ describe("WorkspaceController.refreshSelectedProjectTopology", () => {
     expect(test.state().error).toBe("");
     expect(test.state().workspaces).toEqual([main]);
     expect(test.backgroundErrors).toEqual([{ message: `Failed to refresh workspaces for project ${repo.id} on local`, error: failure }]);
+  });
+
+  it("times out a hung workspace list so the next resume retries instead of wedging", async () => {
+    vi.useFakeTimers();
+    try {
+      const repo = project("p1", "/repo");
+      const main = workspace(repo.id, repo.path, { isMain: true });
+      let calls = 0;
+      const loadWorkspaces = vi.fn((): Promise<Workspace[]> => {
+        calls += 1;
+        if (calls === 1) return new Promise<Workspace[]>(() => undefined);
+        return Promise.resolve([main]);
+      });
+      const test = harness(
+        {
+          selectedMachine: machine("local"),
+          projects: [repo],
+          selectedProject: repo,
+          selectedWorkspace: main,
+          workspaces: [main],
+          workspacesByProjectId: { [repo.id]: [main] },
+        },
+        loadWorkspaces,
+      );
+
+      const pending = test.controller.refreshSelectedProjectTopology();
+      await vi.advanceTimersByTimeAsync(TOPOLOGY_REFRESH_TIMEOUT_MS);
+      await pending;
+
+      expect(loadWorkspaces).toHaveBeenCalledTimes(1);
+      expect(test.backgroundErrors).toHaveLength(1);
+      expect(String(test.backgroundErrors[0]?.error)).toContain("timed out");
+
+      await test.controller.refreshSelectedProjectTopology();
+      expect(loadWorkspaces).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("re-points the selected workspace when its provider-authored label changed outside PI WEB", async () => {

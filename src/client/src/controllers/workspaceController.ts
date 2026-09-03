@@ -10,6 +10,23 @@ import { InMemoryWorkspaceSelectionMemory, selectPreferredWorkspace, type Worksp
 
 const WORKSPACE_TOPOLOGY_REFRESH_DEBOUNCE_MS = 50;
 
+/** A hung workspace list must settle so the shared refresh entry cannot wedge later resumes. */
+export const TOPOLOGY_REFRESH_TIMEOUT_MS = 8_000;
+
+async function withTimeout<T>(work: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = globalThis.setTimeout(() => { reject(new Error(message)); }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) globalThis.clearTimeout(timer);
+  }
+}
+
 export interface WorkspaceControllerDependencies {
   api?: Pick<typeof defaultApi, "sessions" | "workspaces" | "messages">;
   onBackgroundError?: (message: string, error: unknown) => void;
@@ -146,7 +163,11 @@ export class WorkspaceController {
     // just-created worktree disappear again.
     await this.topologyRefreshes.request(machineProjectKey(machineId, project.id), async () => {
       try {
-        const workspaces = await this.api.workspaces(project.id, machineId);
+        const workspaces = await withTimeout(
+          this.api.workspaces(project.id, machineId),
+          TOPOLOGY_REFRESH_TIMEOUT_MS,
+          `Refreshing workspaces for project ${project.id} on ${machineId} timed out`,
+        );
         const current = this.getState();
         if (selectedMachineId(current) !== machineId || current.selectedProject?.id !== project.id) return;
         this.applyProjectWorkspaces(project.id, workspaces);
