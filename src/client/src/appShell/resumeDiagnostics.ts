@@ -53,9 +53,13 @@ interface ResumeDiagnosticRecord {
   visible: boolean;
   online: boolean;
   elapsedMs: number;
+  build: string;
 }
 
 const RESUME_DIAGNOSTIC_BATCH_DELAY_MS = 100;
+
+/** Bundle marker so server logs prove whether a hung page runs the timeout fix. Bump on resume-path changes. */
+export const RESUME_DIAGNOSTICS_BUILD = "20260904-resume-timeout";
 
 /** Emits bounded, content-free resume breadcrumbs so an on-device iOS stall can be reconstructed from server logs. */
 export class ResumeDiagnostics {
@@ -83,6 +87,7 @@ export class ResumeDiagnostics {
       visible: this.deps.isVisible(),
       online: this.deps.isOnline(),
       elapsedMs: Math.max(0, Math.round(this.deps.now() - this.startedAt)),
+      build: RESUME_DIAGNOSTICS_BUILD,
     });
     if (event === "suspend") this.flush();
     else this.flushTimer ??= globalThis.setTimeout(() => { this.flush(); }, RESUME_DIAGNOSTIC_BATCH_DELAY_MS);

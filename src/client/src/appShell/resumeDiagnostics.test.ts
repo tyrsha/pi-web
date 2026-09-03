@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ResumeDiagnostics } from "./resumeDiagnostics";
+import { RESUME_DIAGNOSTICS_BUILD, ResumeDiagnostics } from "./resumeDiagnostics";
 
 describe("ResumeDiagnostics", () => {
   it("batches only enabled, content-free lifecycle breadcrumbs with monotonic sequence numbers", () => {
@@ -27,8 +27,8 @@ describe("ResumeDiagnostics", () => {
 
       expect(send).toHaveBeenCalledOnce();
       expect(send).toHaveBeenCalledWith(JSON.stringify({ events: [
-        { pageId: "pwa-page_123", sequence: 1, event: "refresh.start", visible: true, online: false, elapsedMs: 75 },
-        { pageId: "pwa-page_123", sequence: 2, event: "session.complete", visible: true, online: false, elapsedMs: 120 },
+        { pageId: "pwa-page_123", sequence: 1, event: "refresh.start", visible: true, online: false, elapsedMs: 75, build: RESUME_DIAGNOSTICS_BUILD },
+        { pageId: "pwa-page_123", sequence: 2, event: "session.complete", visible: true, online: false, elapsedMs: 120, build: RESUME_DIAGNOSTICS_BUILD },
       ] }));
     } finally {
       vi.useRealTimers();
