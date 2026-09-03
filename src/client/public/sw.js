@@ -52,39 +52,9 @@ self.addEventListener("message", (event) => {
     })());
     return;
   }
-  // Ack of an in-app session open from a page that has the handler (see notificationclick).
-  if (type === "pi-web:open-session-ack") {
-    const requestId = typeof event.data?.requestId === "string" ? event.data.requestId : "";
-    const pending = openSessionAcks.get(requestId);
-    // WindowClient instances are per-message wrappers: identity comparison must go through the stable client id.
-    if (pending !== undefined && pending.client.id === event.source?.id) {
-      openSessionAcks.delete(requestId);
-      pending.resolve(true);
-    }
-  }
 });
 
 /** Focus (or open) the app and route into the session that produced the notification. */
-const openSessionAcks = new Map();
-const OPEN_SESSION_ACK_TIMEOUT_MS = 800;
-
-/** Ask one client to route in-app; resolve true on ack, false if the page predates the handler. */
-function openSessionInClient(client, target) {
-  const requestId = self.crypto.randomUUID();
-  const acked = new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      openSessionAcks.delete(requestId);
-      resolve(false);
-    }, OPEN_SESSION_ACK_TIMEOUT_MS);
-    openSessionAcks.set(requestId, { client, resolve: (value) => {
-      clearTimeout(timer);
-      resolve(value);
-    } });
-  });
-  client.postMessage({ type: "pi-web:open-session", sessionId: target.sessionId, cwd: target.cwd === "" ? undefined : target.cwd, projectId: target.projectId === "" ? undefined : target.projectId, workspaceId: target.workspaceId === "" ? undefined : target.workspaceId, requestId });
-  return acked;
-}
-
 function notificationTarget(notification) {
   const data = notification.data && typeof notification.data === "object" ? notification.data : {};
   const readString = (key) => (typeof data[key] === "string" && data[key] !== "" ? data[key] : "");
@@ -110,19 +80,20 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil((async () => {
     for (const client of await self.clients.matchAll({ type: "window", includeUncontrolled: true })) {
       try {
-        await client.focus();
+        if (target.sessionId === "") {
+          await client.focus();
+          return;
+        }
+        // A notification can wake an iOS standalone PWA from a suspended document. Navigate it
+        // before focusing so it starts the deep link as a fresh document instead of mutating
+        // session state during WebKit's resume lifecycle.
+        const navigated = await client.navigate(targetUrl.toString());
+        if (navigated === null) continue;
+        await navigated.focus();
+        return;
       } catch {
-        continue; // Unreachable clients are skipped; the next one wins.
+        continue; // Unreachable or unnavigable clients are skipped; the next one wins.
       }
-      if (target.sessionId === "") return;
-      // Prefer in-app routing (no reload, keeps unsent composer state); older pages never ack.
-      if (await openSessionInClient(client, target)) return;
-      try {
-        await client.navigate(targetUrl.toString());
-      } catch {
-        // Same-URL or unsupported: the page is already where the notification pointed.
-      }
-      return;
     }
     if (target.sessionId !== "") return self.clients.openWindow(targetUrl.toString());
   })());

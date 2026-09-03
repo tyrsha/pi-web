@@ -40,8 +40,9 @@ describe("production client build contents", () => {
     expect(serviceWorker).toContain('addEventListener("message"');
     expect(serviceWorker).toContain("clear-push-notifications");
     expect(serviceWorker).toContain("getNotifications");
-    expect(serviceWorker).toContain("pi-web:open-session");
-    expect(serviceWorker).toContain("open-session-ack");
+    expect(serviceWorker).toContain("client.navigate");
+    expect(serviceWorker).not.toContain("pi-web:open-session");
+    expect(serviceWorker).not.toContain("open-session-ack");
     expect(serviceWorker).toContain('set("cwd"');
     expect(serviceWorker).toContain('set("project"');
     expect(serviceWorker).toContain('set("workspace"');

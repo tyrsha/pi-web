@@ -50,7 +50,6 @@ import { NavigationSectionsController, type NavigationSection } from "../appShel
 import { PanelCollapseController, mainViewClass } from "../appShell/panelCollapseController";
 import { PanelResizeController, type PanelResizeConstraints, type ResizablePanelSide } from "../appShell/panelResizeController";
 import { isCreatingSessionId, parseMainView, readRoute, resolveAppRoute, resolveNotificationRoute, routeMatchesWorkspaceIdentity, writeRoute, type AppRoute, type ParsedAppRoute, type WorkspaceRouteIdentity } from "../route";
-import { handleServiceWorkerSessionMessage } from "../swMessageRouting";
 import { PushSubscriptionBinding } from "../pushSubscriptionBinding";
 import { readSettingsSection, writeSettingsSection, type SettingsSection } from "../settingsRoute";
 import { applyActiveShortcutPreferences } from "../shortcutPreferences";
@@ -359,34 +358,10 @@ export class PiWebApp extends LitElement {
   private readonly onPopState = () => {
     this.invalidateNavigationSelection();
     this.syncNavigationFreshness();
-    // Retire the previous restore before scheduling async reconciliation.
     this.routeRestoreSeq += 1;
     void this.withChatScrollTransition(async () => {
       this.restoreSettingsRoute();
       await this.restoreRoute(false);
-    });
-  };
-  /** Push-notification deep link from the service worker: switch sessions in-app instead of reloading. */
-  private readonly onWindowMessage = (event: Event): void => {
-    if (!(event instanceof MessageEvent)) return;
-    handleServiceWorkerSessionMessage({ data: event.data, source: event.source }, (target) => {
-      // Pushes come from the local daemon. Prefer canonical route ids; older payloads
-      // fall back to the cwd join during restore.
-      writeRoute({
-        machineId: undefined,
-        projectId: target.projectId,
-        workspaceId: target.workspaceId,
-        sessionId: target.sessionId,
-        cwd: target.cwd,
-        tool: undefined,
-        view: "chat",
-      });
-      this.invalidateNavigationSelection();
-      this.syncNavigationFreshness();
-      this.routeRestoreSeq += 1;
-      void this.withChatScrollTransition(async () => {
-        await this.restoreRoute(false);
-      });
     });
   };
   private readonly onSystemLightThemeChange = () => {
@@ -495,7 +470,6 @@ export class PiWebApp extends LitElement {
     super.connectedCallback();
     this.unreadConnected = true;
     window.addEventListener("popstate", this.onPopState);
-    window.addEventListener("message", this.onWindowMessage);
     window.addEventListener("pageshow", this.onResumeDiagnosticPageshow);
     window.addEventListener("pagehide", this.onResumeDiagnosticPagehide);
     window.addEventListener("error", this.onResumeDiagnosticRuntimeError);
@@ -527,7 +501,6 @@ export class PiWebApp extends LitElement {
     this.readyChatIdentity = undefined;
     this.sessionUnread.retainMachines(new Set<string>());
     window.removeEventListener("popstate", this.onPopState);
-    window.removeEventListener("message", this.onWindowMessage);
     window.removeEventListener("pageshow", this.onResumeDiagnosticPageshow);
     window.removeEventListener("pagehide", this.onResumeDiagnosticPagehide);
     window.removeEventListener("error", this.onResumeDiagnosticRuntimeError);
