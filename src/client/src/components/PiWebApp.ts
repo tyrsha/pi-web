@@ -213,6 +213,20 @@ export class PiWebApp extends LitElement {
     this.syncPushSubscription();
     if (typeof document !== "undefined" && document.visibilityState !== "visible") this.recordResumeDiagnostic("suspend");
   };
+  /** Diagnostic-only lifecycle hooks; they never alter app behavior. */
+  private readonly onResumeDiagnosticPageshow = (): void => { this.recordResumeDiagnostic("lifecycle.pageshow"); };
+  private readonly onResumeDiagnosticPagehide = (): void => { this.recordResumeDiagnostic("lifecycle.pagehide"); };
+  private readonly onResumeDiagnosticRuntimeError = (): void => { this.recordResumeDiagnostic("runtime.error"); };
+  private readonly onResumeDiagnosticUnhandledRejection = (): void => { this.recordResumeDiagnostic("runtime.unhandledrejection"); };
+  private readonly onResumeDiagnosticInput = (event: Event): void => {
+    if (!this.resumeInteractionProbeArmed) return;
+    if (event.type === "pointerdown") this.recordResumeDiagnostic("input.pointerdown");
+    else if (event.type === "touchstart") this.recordResumeDiagnostic("input.touchstart");
+    else if (event.type === "click") {
+      this.recordResumeDiagnostic("input.click");
+      this.resumeInteractionProbeArmed = false;
+    }
+  };
   private readonly serverNotices = new ServerNoticesController({
     onChange: (machineId) => {
       if (selectedMachineId(this.state) === machineId) this.requestUpdate();
@@ -227,6 +241,8 @@ export class PiWebApp extends LitElement {
   private readonly terminalSelection = new SessionStorageTerminalSelectionMemory();
   private readonly appShell = new AppShellController(this);
   private readonly resumeDiagnostics = new ResumeDiagnostics();
+  private resumeInteractionProbeArmed = false;
+  private resumeRenderProbeRecorded = false;
   private readonly browserResume = new BrowserResumeController({
     onResumeSignal: (trigger) => { this.handleBrowserResumeSignal(trigger); },
     refreshAfterResume: () => this.refreshAfterBrowserResume(),
@@ -320,6 +336,10 @@ export class PiWebApp extends LitElement {
   }
 
   protected override updated(): void {
+    if (this.resumeInteractionProbeArmed && !this.resumeRenderProbeRecorded) {
+      this.resumeRenderProbeRecorded = true;
+      this.recordResumeDiagnostic("render.updated");
+    }
     // Lit has now committed the selected chat and app-shell visibility state.
     // Recheck after every rendered transition; the unread controller
     // deduplicates acknowledgements for the observed completion order.
@@ -388,7 +408,16 @@ export class PiWebApp extends LitElement {
     this.unreadConnected = true;
     window.addEventListener("popstate", this.onPopState);
     window.addEventListener("message", this.onWindowMessage);
-    if (typeof document.addEventListener === "function") document.addEventListener("visibilitychange", this.onPushVisibilityChange);
+    window.addEventListener("pageshow", this.onResumeDiagnosticPageshow);
+    window.addEventListener("pagehide", this.onResumeDiagnosticPagehide);
+    window.addEventListener("error", this.onResumeDiagnosticRuntimeError);
+    window.addEventListener("unhandledrejection", this.onResumeDiagnosticUnhandledRejection);
+    if (typeof document.addEventListener === "function") {
+      document.addEventListener("visibilitychange", this.onPushVisibilityChange);
+      document.addEventListener("pointerdown", this.onResumeDiagnosticInput, true);
+      document.addEventListener("touchstart", this.onResumeDiagnosticInput, true);
+      document.addEventListener("click", this.onResumeDiagnosticInput, true);
+    }
     this.browserResume.connect();
     window.addEventListener("keydown", this.onKeyDown, GLOBAL_SHORTCUT_LISTENER_OPTIONS);
     this.systemLightThemeMedia?.addEventListener("change", this.onSystemLightThemeChange);
@@ -409,7 +438,16 @@ export class PiWebApp extends LitElement {
     this.sessionUnread.retainMachines(new Set<string>());
     window.removeEventListener("popstate", this.onPopState);
     window.removeEventListener("message", this.onWindowMessage);
-    if (typeof document.removeEventListener === "function") document.removeEventListener("visibilitychange", this.onPushVisibilityChange);
+    window.removeEventListener("pageshow", this.onResumeDiagnosticPageshow);
+    window.removeEventListener("pagehide", this.onResumeDiagnosticPagehide);
+    window.removeEventListener("error", this.onResumeDiagnosticRuntimeError);
+    window.removeEventListener("unhandledrejection", this.onResumeDiagnosticUnhandledRejection);
+    if (typeof document.removeEventListener === "function") {
+      document.removeEventListener("visibilitychange", this.onPushVisibilityChange);
+      document.removeEventListener("pointerdown", this.onResumeDiagnosticInput, true);
+      document.removeEventListener("touchstart", this.onResumeDiagnosticInput, true);
+      document.removeEventListener("click", this.onResumeDiagnosticInput, true);
+    }
     this.browserResume.disconnect();
     window.removeEventListener("keydown", this.onKeyDown, GLOBAL_SHORTCUT_LISTENER_OPTIONS);
     this.systemLightThemeMedia?.removeEventListener("change", this.onSystemLightThemeChange);
@@ -481,6 +519,8 @@ export class PiWebApp extends LitElement {
   }
 
   private handleBrowserResumeSignal(trigger: BrowserResumeTrigger): void {
+    this.resumeInteractionProbeArmed = true;
+    this.resumeRenderProbeRecorded = false;
     this.recordResumeDiagnostic(`signal.${trigger}`);
     this.appShell.repairViewportPosition();
     this.schedulePiWebStatusRefresh();
