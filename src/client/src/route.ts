@@ -21,6 +21,23 @@ export interface ParsedAppRoute extends AppRouteLocation {
   view: string | undefined;
 }
 
+/** Deep-link lookups hit the network per project/workspace; a hung one must not wedge boot. */
+export const NOTIFICATION_ROUTE_LOOKUP_TIMEOUT_MS = 8_000;
+
+async function withLookupTimeout<T>(work: Promise<T>, what: string): Promise<T> {
+  let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = globalThis.setTimeout(() => { reject(new Error(`${what} timed out`)); }, NOTIFICATION_ROUTE_LOOKUP_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) globalThis.clearTimeout(timer);
+  }
+}
+
 export type WorkspacePanelRouteResolver = (value: string) => QualifiedContributionId | undefined;
 
 interface NotificationRouteProject {
@@ -113,14 +130,15 @@ export async function resolveNotificationRoute(
 ): Promise<ParsedAppRoute> {
   if ((route.projectId ?? "") !== "" || route.sessionId === undefined) return route;
   for (const project of projects) {
-    const workspaces = cachedWorkspaces[project.id] ?? await loadWorkspaces(project.id).catch(() => []);
+    const workspaces = cachedWorkspaces[project.id]
+      ?? await withLookupTimeout(loadWorkspaces(project.id), `Loading workspaces for project ${project.id}`).catch(() => []);
     if (route.cwd !== undefined) {
       const workspaceId = findNotifiedWorkspace(workspaces, route.cwd);
       if (workspaceId !== undefined) return { ...route, projectId: project.id, workspaceId };
       continue;
     }
     for (const workspace of workspaces) {
-      const sessions = await loadSessions(workspace.path).catch(() => []);
+      const sessions = await withLookupTimeout(loadSessions(workspace.path), `Loading sessions for ${workspace.path}`).catch(() => []);
       if (sessions.some((session) => session.id === route.sessionId)) {
         return { ...route, projectId: project.id, workspaceId: workspace.id };
       }

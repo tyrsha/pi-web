@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readRoute, resolveAppRoute, resolveNotificationRoute, writeRoute, findNotifiedWorkspace, type AppRoute, type ParsedAppRoute } from "./route";
+import { NOTIFICATION_ROUTE_LOOKUP_TIMEOUT_MS, readRoute, resolveAppRoute, resolveNotificationRoute, writeRoute, findNotifiedWorkspace, type AppRoute, type ParsedAppRoute } from "./route";
 
 const originalWindow = globalThis.window;
 
@@ -158,6 +158,28 @@ describe("resolveNotificationRoute", () => {
 
     expect(route).toEqual({ ...sessionRoute, projectId: "p1", workspaceId: "w1" });
     expect(loadSessions).toHaveBeenCalledWith("/repo");
+  });
+
+  it("gives up on hung lookups so a push deep link cannot wedge boot", async () => {
+    vi.useFakeTimers();
+    try {
+      const loadWorkspaces = vi.fn().mockReturnValue(new Promise(() => undefined));
+      const loadSessions = vi.fn();
+      const pending = resolveNotificationRoute(
+        { ...sessionRoute, cwd: "/repo" },
+        [{ id: "p1" }],
+        {},
+        loadWorkspaces,
+        loadSessions,
+      );
+      const route = await vi.advanceTimersByTimeAsync(NOTIFICATION_ROUTE_LOOKUP_TIMEOUT_MS).then(() => pending);
+
+      expect(route).toEqual({ ...sessionRoute, cwd: "/repo" });
+      expect(loadWorkspaces).toHaveBeenCalledWith("p1");
+      expect(loadSessions).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps cwd matching as the direct path without loading sessions", async () => {

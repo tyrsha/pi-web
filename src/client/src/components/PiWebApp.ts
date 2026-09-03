@@ -32,12 +32,13 @@ import { initialSessionWarningVisibilityState, reconcileSessionWarningVisibility
 import { RealtimeSocket, type BrowserRealtimeEvent } from "../sessionSocket";
 import { ServerNoticesController, visibleServerNotices } from "../serverNotices";
 import type { ServerNotice } from "../../../shared/apiTypes";
-import type { PluginMachine, PluginPromptEditor, QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspacePanelContribution, PluginRuntimeContext, TerminalCommandRunsInternalRuntime, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePluginBinding } from "../plugins/types";
+import type { PluginMachine, PluginPromptEditor, PluginSettings, QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspacePanelContribution, PluginRuntimeContext, TerminalCommandRunsInternalRuntime, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePluginBinding } from "../plugins/types";
 import { CLASSIC_THEME_ID, DEFAULT_THEME_PREFERENCE, applyPiWebTheme, findThemePairForTheme, readStoredThemePreference, resolveThemePreference, writeStoredThemePreference, type ThemePreference, type ThemePreferenceResolution } from "../theme";
 import { corePlugin } from "../plugins/core";
 import { themePackPlugin } from "../plugins/themes";
 import { loadExternalPlugins, type ExternalPluginLoadResult } from "../plugins/external";
 import { PluginRegistry, installPluginRuntimeScope, installWorkspaceLabelScope, installWorkspacePanelScope } from "../plugins/registry";
+import { createPluginSettings } from "../plugins/pluginSettings";
 import { createPluginWorkspaceBackend } from "../plugins/workspaceBackend";
 import { createWorkspaceFiles as createPluginWorkspaceFiles } from "../plugins/workspaceFiles";
 import { queryNamespace, readNamespacedString, setNamespacedQueryKey } from "../namespacedQueryArgs";
@@ -478,20 +479,27 @@ export class PiWebApp extends LitElement {
   }
 
   private async loadProjectsAndRestoreRoute() {
-    this.restoreSettingsRoute();
-    const route = readRoute();
-    await this.machines.loadMachines(route.machineId);
-    const effectiveRoute = this.routeForSelectedMachine(route);
-    const initialRouteMachineHealth = this.state.machineStatuses[effectiveRoute.machineId ?? "local"];
-    if (effectiveRoute !== route) this.replaceRouteAndClearWorkspaceQuery(effectiveRoute);
-    await this.projects.loadProjects();
-    await this.withChatScrollTransition(() => this.restoreRouteFor(effectiveRoute, false));
-    if (this.shouldDeferRemoteRouteRestore(effectiveRoute, initialRouteMachineHealth)) this.deferRemoteRouteRestore(effectiveRoute);
-    else {
-      this.clearPendingRemoteRouteRestore();
-      this.rememberCurrentMachineNavigation();
+    this.recordResumeDiagnostic("boot.start");
+    try {
+      this.restoreSettingsRoute();
+      const route = readRoute();
+      await this.machines.loadMachines(route.machineId);
+      const effectiveRoute = this.routeForSelectedMachine(route);
+      const initialRouteMachineHealth = this.state.machineStatuses[effectiveRoute.machineId ?? "local"];
+      if (effectiveRoute !== route) this.replaceRouteAndClearWorkspaceQuery(effectiveRoute);
+      await this.projects.loadProjects();
+      await this.withChatScrollTransition(() => this.restoreRouteFor(effectiveRoute, false));
+      if (this.shouldDeferRemoteRouteRestore(effectiveRoute, initialRouteMachineHealth)) this.deferRemoteRouteRestore(effectiveRoute);
+      else {
+        this.clearPendingRemoteRouteRestore();
+        this.rememberCurrentMachineNavigation();
+      }
+      await this.refreshWorkspaceDeletionRuns();
+      this.recordResumeDiagnostic("boot.complete");
+    } catch (error) {
+      this.recordResumeDiagnostic("boot.failed");
+      throw error;
     }
-    await this.refreshWorkspaceDeletionRuns();
   }
 
   private handleBrowserResumeSignal(trigger: BrowserResumeTrigger): void {
@@ -1374,6 +1382,8 @@ export class PiWebApp extends LitElement {
         .onRemoveMachine=${(machine: Machine) => { void this.removeMachine(machine); }}
         .projects=${this.state.projects}
         .selectedProject=${this.state.selectedProject}
+        .projectListExtension=${this.projectListExtension()}
+        .projectListSettings=${this.projectListSettings()}
         .workspaces=${this.state.workspaces}
         .selectedWorkspace=${this.state.selectedWorkspace}
         .deletingWorkspaceIds=${pendingWorkspaceDeletionIds(this.state.workspaceDeletionRuns)}
@@ -1851,6 +1861,16 @@ export class PiWebApp extends LitElement {
         return { start: sel.from, end: sel.to, text: editor.state.sliceDoc(sel.from, sel.to) };
       },
     };
+  }
+
+  private projectListExtension() {
+    return this.plugins.getProjectListExtension(this.createPluginRuntimeContext());
+  }
+
+  private projectListSettings(): PluginSettings | undefined {
+    const extension = this.projectListExtension();
+    if (extension === undefined) return undefined;
+    return createPluginSettings(extension.sourcePluginId ?? extension.pluginId);
   }
 
   private createPluginRuntimeContext(): PluginRuntimeContext {

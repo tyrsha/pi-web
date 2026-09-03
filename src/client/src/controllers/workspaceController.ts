@@ -75,7 +75,12 @@ export class WorkspaceController {
     this.sessions.clearActiveSession();
     this.setState({ selectedProject: project, selectedWorkspace: undefined, workspaces: [], isLoadingWorkspaces: true, ...resetWorkspaceScopedState() });
     try {
-      const workspaces = await this.api.workspaces(project.id, machineId);
+      // Same hung-fetch class as the resume topology refresh: time out so boot/selection cannot wedge.
+      const workspaces = await withTimeout(
+        this.api.workspaces(project.id, machineId),
+        TOPOLOGY_REFRESH_TIMEOUT_MS,
+        `Refreshing workspaces for project ${project.id} on ${machineId} timed out`,
+      );
       if (selectedMachineId(this.getState()) !== machineId || this.getState().selectedProject?.id !== project.id) return;
       this.setState({ workspaces, workspacesByProjectId: { ...this.getState().workspacesByProjectId, [project.id]: workspaces }, isLoadingWorkspaces: false });
       const workspace = selectPreferredWorkspace(workspaces, { targetWorkspaceId: target?.workspaceId, latestWorkspaceId: this.workspaceSelection.latestWorkspaceId(machineProjectKey(machineId, project.id)) });

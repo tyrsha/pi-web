@@ -251,6 +251,41 @@ describe("WorkspaceController.refreshSelectedProjectTopology", () => {
     expect(test.backgroundErrors).toEqual([{ message: `Failed to refresh workspaces for project ${repo.id} on local`, error: failure }]);
   });
 
+  it("times out a hung project workspace list during selection so boot can proceed", async () => {
+    vi.useFakeTimers();
+    try {
+      const repo = project("p1", "/repo");
+      const main = workspace(repo.id, repo.path, { isMain: true });
+      let calls = 0;
+      const loadWorkspaces = vi.fn((): Promise<Workspace[]> => {
+        calls += 1;
+        if (calls === 1) return new Promise<Workspace[]>(() => undefined);
+        return Promise.resolve([main]);
+      });
+      const test = harness(
+        {
+          selectedMachine: machine("local"),
+          projects: [repo],
+        },
+        loadWorkspaces,
+      );
+
+      const pending = test.controller.selectProject(repo);
+      await vi.advanceTimersByTimeAsync(TOPOLOGY_REFRESH_TIMEOUT_MS);
+      await pending;
+
+      expect(loadWorkspaces).toHaveBeenCalledTimes(1);
+      expect(test.state().isLoadingWorkspaces).toBe(false);
+      expect(test.state().error).toContain("timed out");
+
+      await test.controller.selectProject(repo);
+      expect(loadWorkspaces).toHaveBeenCalledTimes(2);
+      expect(test.state().workspaces).toEqual([main]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("times out a hung workspace list so the next resume retries instead of wedging", async () => {
     vi.useFakeTimers();
     try {
