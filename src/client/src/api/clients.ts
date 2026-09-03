@@ -61,6 +61,7 @@ import {
 } from "./parsers";
 import { messagePath } from "./urls";
 import type { PushSubscriptionRegistration } from "../pushSubscriptionBinding";
+import { clientPageId } from "../appShell/clientPageId";
 
 const machinePrefix = (machineId = "local") => `api/machines/${encodeURIComponent(machineId)}`;
 
@@ -105,8 +106,8 @@ export const piWebApi = {
 /** Web Push subscription management on the local machine's daemon. */
 export const pushApi = {
   vapidPublicKey: () => request("api/push/vapid-public-key", parsePushVapidPublicKey),
-  subscribe: (subscription: PushSubscriptionRegistration) => request("api/push/subscribe", parseAccepted, { method: "POST", body: JSON.stringify(subscription) }),
-  unsubscribe: (subscription: Pick<PushSubscriptionJSON, "endpoint">) => request("api/push/unsubscribe", parseRemoved, { method: "DELETE", body: JSON.stringify(subscription) }),
+  subscribe: (subscription: PushSubscriptionRegistration) => request("api/push/subscribe", parseAccepted, { method: "POST", body: JSON.stringify(subscription), headers: { "x-pi-web-page-id": clientPageId() } }),
+  unsubscribe: (subscription: Pick<PushSubscriptionJSON, "endpoint">) => request("api/push/unsubscribe", parseRemoved, { method: "DELETE", body: JSON.stringify(subscription), headers: { "x-pi-web-page-id": clientPageId() } }),
 };
 
 export const machinesApi = {

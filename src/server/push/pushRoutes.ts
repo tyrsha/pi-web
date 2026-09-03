@@ -13,6 +13,7 @@ export function registerPushRoutes(app: FastifyInstance, deps: PushRouteDependen
     return { publicKey: deps.publicKey };
   });
   app.post("/push/subscribe", (request, reply) => {
+    request.log.info({ clientPageId: parseClientPageId(request.headers["x-pi-web-page-id"]), pushOperation: "subscribe" }, "push subscription request");
     if (!deps.configured) { reply.code(503); return { error: "Web push is not configured on this server" }; }
     const subscription = parsePushSubscriptionRecord(request.body);
     if (subscription === undefined) { reply.code(400); return { error: "Invalid push subscription payload" }; }
@@ -20,6 +21,7 @@ export function registerPushRoutes(app: FastifyInstance, deps: PushRouteDependen
     return { accepted: true };
   });
   app.delete("/push/unsubscribe", (request) => {
+    request.log.info({ clientPageId: parseClientPageId(request.headers["x-pi-web-page-id"]), pushOperation: "unsubscribe" }, "push subscription request");
     const endpoint = parsePushSubscriptionEndpoint(request.body);
     if (!deps.configured || endpoint === undefined) return { removed: false };
     return { removed: deps.store.remove(endpoint) };
@@ -39,3 +41,6 @@ function parseKeys(value: unknown): Readonly<Record<string, string>> | undefined
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function optionalId(value: unknown): string | undefined { return typeof value === "string" && value !== "" && value.length <= 512 ? value : undefined; }
 function requiredId(value: unknown): string | undefined { return optionalId(value); }
+function parseClientPageId(value: string | string[] | undefined): string | undefined {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(value) ? value : undefined;
+}
