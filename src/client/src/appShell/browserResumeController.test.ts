@@ -237,4 +237,43 @@ describe("BrowserResumeController", () => {
     expect(refreshCalls).toBe(1);
     controller.disconnect();
   });
+
+  it("recovers the next resume when a refresh hangs past the timeout", async () => {
+    const windowTarget = new EventTarget();
+    const documentTarget = new EventTarget();
+    const frames = frameHarness();
+    const errors: unknown[] = [];
+    let refreshCalls = 0;
+    let releaseHungRefresh: (() => void) | undefined;
+    const controller = new BrowserResumeController({
+      onResumeSignal: () => undefined,
+      refreshAfterResume: () => {
+        refreshCalls += 1;
+        if (refreshCalls === 1) return new Promise<void>((resolve) => { releaseHungRefresh = resolve; });
+        return Promise.resolve();
+      },
+      onRefreshError: (error) => { errors.push(error); },
+    }, {
+      windowTarget,
+      documentTarget,
+      isDocumentVisible: () => true,
+      scheduleFrame: frames.scheduleFrame,
+      refreshTimeoutMs: 30,
+    });
+    controller.connect();
+
+    windowTarget.dispatchEvent(new Event("focus"));
+    frames.runNext();
+    await vi.waitFor(() => { expect(refreshCalls).toBe(1); });
+
+    await vi.waitFor(() => { expect(errors).toHaveLength(1); });
+    expect(String(errors[0])).toContain("timed out");
+
+    windowTarget.dispatchEvent(new Event("focus"));
+    frames.runNext();
+    await vi.waitFor(() => { expect(refreshCalls).toBe(2); });
+
+    releaseHungRefresh?.();
+    controller.disconnect();
+  });
 });
