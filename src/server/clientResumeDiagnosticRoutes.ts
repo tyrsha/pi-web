@@ -47,6 +47,7 @@ interface ClientResumeDiagnostic {
   visible: boolean;
   online: boolean;
   elapsedMs: number;
+  build?: string | undefined;
 }
 
 /** Accept deliberately small, content-free iOS PWA resume breadcrumbs for journal inspection. */
@@ -78,12 +79,14 @@ export function parseClientResumeDiagnostic(value: unknown): ClientResumeDiagnos
   const visible = value["visible"];
   const online = value["online"];
   const elapsedMs = value["elapsedMs"];
+  const build = value["build"];
   if (typeof pageId !== "string" || !/^[A-Za-z0-9_-]{8,64}$/.test(pageId)) return undefined;
   if (typeof sequence !== "number" || !Number.isInteger(sequence) || sequence < 1 || sequence > 10_000) return undefined;
   if (!isResumeEvent(event)) return undefined;
   if (typeof visible !== "boolean" || typeof online !== "boolean") return undefined;
   if (typeof elapsedMs !== "number" || !Number.isInteger(elapsedMs) || elapsedMs < 0 || elapsedMs > 86_400_000) return undefined;
-  return { pageId, sequence, event, visible, online, elapsedMs };
+  if (build !== undefined && (typeof build !== "string" || !/^[A-Za-z0-9_.-]{1,32}$/.test(build))) return undefined;
+  return { pageId, sequence, event, visible, online, elapsedMs, ...(build === undefined ? {} : { build }) };
 }
 
 function isResumeEvent(value: unknown): value is ResumeEvent {

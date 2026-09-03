@@ -27,6 +27,13 @@ describe("parseClientResumeDiagnostic", () => {
   ])("rejects invalid diagnostic fields", (value) => {
     expect(parseClientResumeDiagnostic(value)).toBeUndefined();
   });
+
+  it("passes through a valid bundle marker and rejects a malformed one", () => {
+    expect(parseClientResumeDiagnostic({ ...diagnostic, build: "20260904-resume-timeout" }))
+      .toEqual({ ...diagnostic, build: "20260904-resume-timeout" });
+    expect(parseClientResumeDiagnostic({ ...diagnostic, build: "has space" })).toBeUndefined();
+    expect(parseClientResumeDiagnostic({ ...diagnostic, build: 7 })).toBeUndefined();
+  });
 });
 
 describe("client resume diagnostic route", () => {
