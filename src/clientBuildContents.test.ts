@@ -50,9 +50,10 @@ describe("production client build contents", () => {
       expect(serviceWorker).toContain('addEventListener("message"');
       expect(serviceWorker).toContain("clear-push-notifications");
       expect(serviceWorker).toContain("getNotifications");
-      // Deep links route in-app when the page acks; navigation stays the fallback for old pages.
-      expect(serviceWorker).toContain("pi-web:open-session");
-      expect(serviceWorker).toContain("open-session-ack");
+      // Push clicks navigate before focusing, so a suspended standalone PWA starts a fresh deep link.
+      expect(serviceWorker).toContain("client.navigate");
+      expect(serviceWorker).not.toContain("pi-web:open-session");
+      expect(serviceWorker).not.toContain("open-session-ack");
       // The cwd rides along so cold starts can resolve the session's project and workspace.
       expect(serviceWorker).toContain('set("cwd"');
       // When the daemon resolves the route, the worker links the canonical app URL directly.
