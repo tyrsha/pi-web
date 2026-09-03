@@ -1,4 +1,5 @@
 import { resolveAppUrl } from "../appUrl";
+import { clientPageId } from "./clientPageId";
 
 export type ResumeDiagnosticEvent =
   | "suspend"
@@ -98,7 +99,7 @@ export class ResumeDiagnostics {
 }
 
 function browserResumeDiagnosticsDependencies(): ResumeDiagnosticsDependencies {
-  const pageId = browserDiagnosticPageId();
+  const pageId = clientPageId();
   return {
     send: (body) => {
       void fetch(resolveAppUrl("api/client-diagnostics/resume"), {
@@ -113,9 +114,4 @@ function browserResumeDiagnosticsDependencies(): ResumeDiagnosticsDependencies {
     isVisible: () => typeof document === "undefined" || document.visibilityState === "visible",
     isOnline: () => typeof navigator === "undefined" || navigator.onLine,
   };
-}
-
-function browserDiagnosticPageId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID().replaceAll("-", "");
-  return Math.random().toString(36).slice(2).padEnd(8, "0");
 }
