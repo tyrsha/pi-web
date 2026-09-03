@@ -32,7 +32,7 @@ import { initialSessionWarningVisibilityState, reconcileSessionWarningVisibility
 import { RealtimeSocket, type BrowserRealtimeEvent } from "../sessionSocket";
 import { ServerNoticesController, visibleServerNotices } from "../serverNotices";
 import type { ServerNotice } from "../../../shared/apiTypes";
-import type { ContributionQueryValue, PiWebPluginRegistration, PluginMachine, PluginPromptEditor, QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspacePanelContribution, PluginRuntimeContext, WorkspaceFilesCapabilityV1, WorkspaceHost, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelNavigationV1, WorkspacePanelTerminal, WorkspacePluginBinding, WorkspaceTerminalCommandInput } from "../plugins/types";
+import type { ContributionQueryValue, PiWebPluginRegistration, PluginMachine, PluginPromptEditor, PluginSettings, QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspacePanelContribution, PluginRuntimeContext, WorkspaceFilesCapabilityV1, WorkspaceHost, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelNavigationV1, WorkspacePanelTerminal, WorkspacePluginBinding, WorkspaceTerminalCommandInput } from "../plugins/types";
 import { CLASSIC_THEME_ID, DEFAULT_THEME_PREFERENCE, applyPiWebTheme, findThemePairForTheme, readStoredThemePreference, resolveThemePreference, writeStoredThemePreference, type ThemePreference, type ThemePreferenceResolution } from "../theme";
 import { corePlugin } from "../plugins/core";
 import { themePackPlugin } from "../plugins/themes";
@@ -40,6 +40,7 @@ import { loadExternalPlugins, type ExternalPluginLoadResult } from "../plugins/e
 import { REQUIRED_TERMINAL_PLUGIN_ID, type TerminalPluginMode } from "../../../shared/requiredTerminalPlugin";
 import { PluginRegistry, installPluginRuntimeScope, installWorkspaceLabelScope, installWorkspacePanelScope, type BrowserPluginLifecyclePhase, type PluginRegistrationFailure } from "../plugins/registry";
 import { createPluginPeer } from "../plugins/pluginPeer";
+import { createPluginSettings } from "../plugins/pluginSettings";
 import { REQUIRED_TERMINAL_BROWSER_FACADE_CAPABILITY, requiredTerminalUnavailableError, type RequiredTerminalBrowserComposition, type WorkspaceContributionNavigationV1 } from "../plugins/requiredTerminalFacade";
 import { createWorkspaceFiles as createPluginWorkspaceFiles } from "../plugins/workspaceFiles";
 import { contributionQueryFromRecord, isContributionQueryLocalKey, patchContributionQueryRecord, readContributionQuery, readContributionQueryRecord, setContributionQueryKey, writeContributionQueryRecord, type ContributionQueryRecord } from "../namespacedQueryArgs";
@@ -575,7 +576,9 @@ export class PiWebApp extends LitElement {
   }
 
   private async loadProjectsAndRestoreRoute() {
-    this.restoreSettingsRoute();
+    this.recordResumeDiagnostic("boot.start");
+    try {
+      this.restoreSettingsRoute();
     const route = readRoute();
     if (!await this.machines.loadMachines(route.machineId)) {
       this.setContentError(route, this.state.error);
@@ -604,6 +607,11 @@ export class PiWebApp extends LitElement {
       this.rememberCurrentMachineNavigation();
     }
     await this.refreshWorkspaceDeletionRuns();
+    this.recordResumeDiagnostic("boot.complete");
+    } catch (error) {
+      this.recordResumeDiagnostic("boot.failed");
+      throw error;
+    }
   }
 
   private handleBrowserResumeSignal(trigger: BrowserResumeTrigger): void {
@@ -1918,6 +1926,8 @@ export class PiWebApp extends LitElement {
         .onRemoveMachine=${this.navigationActions.removeMachine}
         .projects=${this.state.projects}
         .selectedProject=${this.state.selectedProject}
+        .projectListExtension=${this.projectListExtension()}
+        .projectListSettings=${this.projectListSettings()}
         .workspaces=${this.state.workspaces}
         .selectedWorkspace=${this.state.selectedWorkspace}
         .deletingWorkspaceIds=${this.deletingWorkspaceIds}
@@ -2751,6 +2761,16 @@ export class PiWebApp extends LitElement {
         return { start: sel.from, end: sel.to, text: editor.state.sliceDoc(sel.from, sel.to) };
       },
     };
+  }
+
+  private projectListExtension() {
+    return this.plugins.getProjectListExtension(this.createPluginRuntimeContext());
+  }
+
+  private projectListSettings(): PluginSettings | undefined {
+    const extension = this.projectListExtension();
+    if (extension === undefined) return undefined;
+    return createPluginSettings(extension.sourcePluginId ?? extension.pluginId);
   }
 
   private createPluginRuntimeContext(): PluginRuntimeContext {

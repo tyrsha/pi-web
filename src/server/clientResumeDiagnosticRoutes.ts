@@ -1,6 +1,9 @@
 import type { FastifyInstance } from "fastify";
 
 const EVENT_RECORD = {
+  "boot.start": true,
+  "boot.complete": true,
+  "boot.failed": true,
   suspend: true,
   "signal.focus": true,
   "signal.online": true,

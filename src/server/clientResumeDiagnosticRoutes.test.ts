@@ -28,6 +28,15 @@ describe("parseClientResumeDiagnostic", () => {
     expect(parseClientResumeDiagnostic(value)).toBeUndefined();
   });
 
+  it("accepts boot lifecycle breadcrumbs", () => {
+    expect(parseClientResumeDiagnostic({ ...diagnostic, event: "boot.start" }))
+      .toEqual({ ...diagnostic, event: "boot.start" });
+    expect(parseClientResumeDiagnostic({ ...diagnostic, event: "boot.complete" }))
+      .toEqual({ ...diagnostic, event: "boot.complete" });
+    expect(parseClientResumeDiagnostic({ ...diagnostic, event: "boot.failed" }))
+      .toEqual({ ...diagnostic, event: "boot.failed" });
+  });
+
   it("passes through a valid bundle marker and rejects a malformed one", () => {
     expect(parseClientResumeDiagnostic({ ...diagnostic, build: "20260904-resume-timeout" }))
       .toEqual({ ...diagnostic, build: "20260904-resume-timeout" });

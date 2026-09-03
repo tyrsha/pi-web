@@ -94,7 +94,12 @@ export class WorkspaceController {
     this.sessions.clearActiveSession();
     this.setState({ selectedProject: project, selectedWorkspace: undefined, workspaces: [], isLoadingWorkspaces: true, ...resetWorkspaceScopedState() });
     try {
-      const workspaces = await this.api.workspaces(project.id, machineId);
+      // Bound stalled provider lookups without letting stale navigation mutate the selection.
+      const workspaces = await withTimeout(
+        this.api.workspaces(project.id, machineId),
+        TOPOLOGY_REFRESH_TIMEOUT_MS,
+        `Refreshing workspaces for project ${project.id} on ${machineId} timed out`,
+      );
       if (!this.navigationIsCurrent(navigation)
         || selectedMachineId(this.getState()) !== machineId
         || this.getState().selectedProject?.id !== project.id) return;

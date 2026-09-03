@@ -2,6 +2,9 @@ import { resolveAppUrl } from "../appUrl";
 import { clientPageId } from "./clientPageId";
 
 export type ResumeDiagnosticEvent =
+  | "boot.start"
+  | "boot.complete"
+  | "boot.failed"
   | "suspend"
   | "signal.focus"
   | "signal.online"
