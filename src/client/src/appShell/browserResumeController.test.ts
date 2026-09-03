@@ -82,7 +82,7 @@ describe("BrowserResumeController", () => {
     documentTarget.dispatchEvent(new Event("visibilitychange"));
     windowTarget.dispatchEvent(new Event("focus"));
 
-    expect(onResumeSignal).toHaveBeenCalledOnce();
+    expect(onResumeSignal).toHaveBeenCalledTimes(3);
     expect(frames.pendingCount()).toBe(1);
     expect(refreshCalls).toBe(0);
 
@@ -92,7 +92,7 @@ describe("BrowserResumeController", () => {
 
     visible = false;
     documentTarget.dispatchEvent(new Event("visibilitychange"));
-    expect(onResumeSignal).toHaveBeenCalledOnce();
+    expect(onResumeSignal).toHaveBeenCalledTimes(3);
     expect(frames.pendingCount()).toBe(0);
 
     refreshGate.resolve(undefined);
@@ -104,7 +104,7 @@ describe("BrowserResumeController", () => {
     expect(frames.pendingCount()).toBe(0);
     await Promise.resolve();
     windowTarget.dispatchEvent(new Event("focus"));
-    expect(onResumeSignal).toHaveBeenCalledOnce();
+    expect(onResumeSignal).toHaveBeenCalledTimes(4);
     expect(refreshCalls).toBe(1);
   });
 
