@@ -10,6 +10,9 @@ interface ScheduledFrame {
 /** WebKit can lose a queued animation frame while resuming a suspended standalone PWA. */
 export const BROWSER_RESUME_FRAME_FALLBACK_MS = 250;
 
+/** A resume refresh must never wedge later resumes: one hung fetch used to pin `refreshing`. */
+export const BROWSER_RESUME_REFRESH_TIMEOUT_MS = 20_000;
+
 export type BrowserResumeTrigger = "focus" | "online" | "visibility";
 
 export interface BrowserResumeCallbacks {
@@ -23,6 +26,7 @@ export interface BrowserResumeControllerOptions {
   documentTarget?: BrowserEventTarget | undefined;
   isDocumentVisible?: (() => boolean) | undefined;
   scheduleFrame?: ((callback: () => void) => ScheduledFrame) | undefined;
+  refreshTimeoutMs?: number | undefined;
 }
 
 /** Owns browser resume listeners and batches focus/visibility refreshes per frame. */
@@ -34,12 +38,14 @@ export class BrowserResumeController {
   private scheduledRefresh: ScheduledFrame | undefined;
   private connected = false;
   private refreshing = false;
+  private readonly refreshTimeoutMs: number;
 
   constructor(private readonly callbacks: BrowserResumeCallbacks, options: BrowserResumeControllerOptions = {}) {
     this.windowTarget = options.windowTarget ?? browserWindowTarget();
     this.documentTarget = options.documentTarget ?? browserDocumentTarget();
     this.isDocumentVisible = options.isDocumentVisible ?? documentIsVisible;
     this.scheduleFrame = options.scheduleFrame ?? scheduleBrowserFrame;
+    this.refreshTimeoutMs = options.refreshTimeoutMs ?? BROWSER_RESUME_REFRESH_TIMEOUT_MS;
   }
 
   connect(): void {
@@ -86,9 +92,26 @@ export class BrowserResumeController {
       // refresh is enough; a trailing duplicate immediately reopens every socket.
       if (!this.connected || this.refreshing) return;
       this.refreshing = true;
-      void Promise.resolve(this.callbacks.refreshAfterResume())
+      void this.runRefreshWithTimeout()
         .catch((error: unknown) => { this.callbacks.onRefreshError(error); })
         .finally(() => { this.refreshing = false; });
+    });
+  }
+
+  /** Race the refresh against a timer so a hung fetch cannot wedge every later resume. */
+  private runRefreshWithTimeout(): Promise<void> {
+    let timeout: ReturnType<typeof globalThis.setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeout = globalThis.setTimeout(() => {
+        reject(new Error(`Browser resume refresh timed out after ${String(this.refreshTimeoutMs)}ms`));
+      }, this.refreshTimeoutMs);
+    });
+    const work = Promise.resolve().then(() => this.callbacks.refreshAfterResume());
+    // The loser of the race still settles later; swallow it so it never surfaces as unhandled.
+    work.catch(() => undefined);
+    timeoutPromise.catch(() => undefined);
+    return Promise.race([work, timeoutPromise]).finally(() => {
+      if (timeout !== undefined) globalThis.clearTimeout(timeout);
     });
   }
 
