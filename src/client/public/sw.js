@@ -78,23 +78,20 @@ self.addEventListener("notificationclick", (event) => {
     if (target.cwd !== "") targetUrl.searchParams.set("cwd", target.cwd);
   }
   event.waitUntil((async () => {
+    if (target.sessionId !== "") {
+      // Never focus or navigate a suspended iOS PWA document: either action can leave WebKit
+      // showing only its black launch surface. Opening the deep link lets the OS create its own
+      // foreground browsing context instead.
+      await self.clients.openWindow(targetUrl.toString());
+      return;
+    }
     for (const client of await self.clients.matchAll({ type: "window", includeUncontrolled: true })) {
       try {
-        if (target.sessionId === "") {
-          await client.focus();
-          return;
-        }
-        // A notification can wake an iOS standalone PWA from a suspended document. Navigate it
-        // before focusing so it starts the deep link as a fresh document instead of mutating
-        // session state during WebKit's resume lifecycle.
-        const navigated = await client.navigate(targetUrl.toString());
-        if (navigated === null) continue;
-        await navigated.focus();
+        await client.focus();
         return;
       } catch {
-        continue; // Unreachable or unnavigable clients are skipped; the next one wins.
+        continue; // Unreachable clients are skipped; the next one wins.
       }
     }
-    if (target.sessionId !== "") return self.clients.openWindow(targetUrl.toString());
   })());
 });

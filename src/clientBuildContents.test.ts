@@ -50,8 +50,9 @@ describe("production client build contents", () => {
       expect(serviceWorker).toContain('addEventListener("message"');
       expect(serviceWorker).toContain("clear-push-notifications");
       expect(serviceWorker).toContain("getNotifications");
-      // Push clicks navigate before focusing, so a suspended standalone PWA starts a fresh deep link.
-      expect(serviceWorker).toContain("client.navigate");
+      // Push clicks open their deep link instead of mutating a suspended standalone PWA document.
+      expect(serviceWorker).toContain("clients.openWindow");
+      expect(serviceWorker).not.toContain("client.navigate");
       expect(serviceWorker).not.toContain("pi-web:open-session");
       expect(serviceWorker).not.toContain("open-session-ack");
       // The cwd rides along so cold starts can resolve the session's project and workspace.
