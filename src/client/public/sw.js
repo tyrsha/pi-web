@@ -78,20 +78,22 @@ self.addEventListener("notificationclick", (event) => {
     if (target.cwd !== "") targetUrl.searchParams.set("cwd", target.cwd);
   }
   event.waitUntil((async () => {
-    if (target.sessionId !== "") {
-      // Never focus or navigate a suspended iOS PWA document: either action can leave WebKit
-      // showing only its black launch surface. Opening the deep link lets the OS create its own
-      // foreground browsing context instead.
-      await self.clients.openWindow(targetUrl.toString());
-      return;
-    }
-    for (const client of await self.clients.matchAll({ type: "window", includeUncontrolled: true })) {
+    // Reuse one window: opening a fresh document per tap piles up full app boots
+    // (sockets, snapshots, memory) until iOS jetsams and the visible PWA freezes on
+    // stale UI. With resume timeouts in place, focusing a suspended document recovers
+    // through the refresh cycle instead of wedging.
+    const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of clients) {
       try {
+        if (target.sessionId !== "" && client.url !== targetUrl.toString()) {
+          await client.navigate(targetUrl.toString());
+        }
         await client.focus();
         return;
       } catch {
         continue; // Unreachable clients are skipped; the next one wins.
       }
     }
+    if (target.sessionId !== "") return self.clients.openWindow(targetUrl.toString());
   })());
 });
