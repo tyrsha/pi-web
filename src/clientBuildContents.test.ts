@@ -50,10 +50,10 @@ describe("production client build contents", () => {
       expect(serviceWorker).toContain('addEventListener("message"');
       expect(serviceWorker).toContain("clear-push-notifications");
       expect(serviceWorker).toContain("getNotifications");
-      // Push clicks reuse one window (focus + navigate) so taps cannot pile up full app
-      // boots; a fresh document opens only when no window exists.
-      expect(serviceWorker).toContain("clients.openWindow");
-      expect(serviceWorker).toContain("client.navigate");
+      // Session clicks open the route directly, without waiting for a suspended client's
+      // navigation. Non-session clicks retain their existing focus-only behavior.
+      expect(serviceWorker).toContain("event.waitUntil(self.clients.openWindow(targetUrl.toString()))");
+      expect(serviceWorker).not.toContain("client.navigate");
       expect(serviceWorker).toContain("client.focus");
       expect(serviceWorker).not.toContain("pi-web:open-session");
       expect(serviceWorker).not.toContain("open-session-ack");
