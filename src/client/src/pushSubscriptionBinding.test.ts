@@ -29,6 +29,58 @@ function bindingDependencies(enabled: boolean): {
 }
 
 describe("PWA push subscription binding", () => {
+  it.each(["registration", "subscription", "subscribe", "storage"] as const)("stops after a %s failure and retries the latest target on a later sync", async (stage) => {
+    vi.useFakeTimers();
+    try {
+      const harness = bindingDependencies(true);
+      const error = new Error("Push binding unavailable");
+      const onError = vi.fn();
+      const instanceId = vi.fn(() => "instance-1");
+      // Bound the failing fake: the regression used to spin forever on persistent
+      // rejection, starving even the test runner's timeout. Three failures expose
+      // the unwanted immediate retries without hanging the suite.
+      if (stage === "registration") harness.getRegistration.mockRejectedValueOnce(error).mockRejectedValueOnce(error).mockRejectedValueOnce(error);
+      if (stage === "subscription") harness.getSubscription.mockRejectedValueOnce(error).mockRejectedValueOnce(error).mockRejectedValueOnce(error);
+      if (stage === "subscribe") harness.subscribe.mockRejectedValueOnce(error).mockRejectedValueOnce(error).mockRejectedValueOnce(error);
+      if (stage === "storage") {
+        const fail = () => { throw error; };
+        instanceId.mockImplementationOnce(fail).mockImplementationOnce(fail).mockImplementationOnce(fail);
+      }
+      const binding = new PushSubscriptionBinding({ ...harness.deps, instanceId, onError });
+
+      binding.sync(TARGET);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onError).toHaveBeenCalledExactlyOnceWith(error);
+      expect(harness.getRegistration).toHaveBeenCalledOnce();
+
+      harness.getRegistration.mockReset().mockResolvedValue({ pushManager: { getSubscription: harness.getSubscription } });
+      harness.getSubscription.mockReset().mockResolvedValue({ toJSON: () => SUBSCRIPTION });
+      harness.subscribe.mockReset().mockResolvedValue();
+      instanceId.mockReset().mockReturnValue("instance-1");
+      const latest = { ...TARGET, sessionId: "session-2", foreground: true };
+      binding.sync(latest);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(harness.subscribe).toHaveBeenCalledExactlyOnceWith({ ...SUBSCRIPTION, instanceId: "instance-1", ...latest });
+      expect(onError).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still sends a trailing target change after a successful in-flight sync", async () => {
+    const harness = bindingDependencies(true);
+    let finish: (() => void) | undefined;
+    harness.subscribe.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const binding = new PushSubscriptionBinding(harness.deps);
+    binding.sync(TARGET);
+    await vi.waitFor(() => { expect(harness.subscribe).toHaveBeenCalledOnce(); });
+    const latest = { ...TARGET, sessionId: "session-2" };
+    binding.sync(latest);
+    expect(harness.subscribe).toHaveBeenCalledOnce();
+    finish?.();
+    await vi.waitFor(() => { expect(harness.subscribe).toHaveBeenCalledTimes(2); });
+    expect(harness.subscribe).toHaveBeenLastCalledWith({ ...SUBSCRIPTION, instanceId: "instance-1", ...latest });
+  });
   it("persists the explicit enabled choice per PWA storage partition", () => {
     const storage = memoryStorage();
     expect(isPwaPushSubscriptionEnabled(storage)).toBe(false);

@@ -1124,6 +1124,8 @@ export interface PiSessionServiceDependencies {
 
 export class PiSessionService implements SessionRouteService {
   private readonly active = new Map<string, ActiveSession<PiSessionRuntime>>();
+  /** One in-flight runtime abort per session object; repeated Stop clicks must not queue more waits. */
+  private readonly pendingAbortRequests = new WeakMap<PiAgentSession, Promise<void>>();
   private readonly pendingSessionOpens = new Map<string, PendingSessionOpen>();
   /**
    * Sessions whose extension binding is still in flight. A `session_start`
@@ -3043,28 +3045,25 @@ export class PiSessionService implements SessionRouteService {
     return this.statusFromSession(session);
   }
 
-  async abort(ref: PiSessionRef): Promise<void> {
+  abort(ref: PiSessionRef): Promise<void> {
     const active = this.activeForRef(ref);
-    if (active === undefined) return;
-    const sessionId = active.runtime.session.sessionId;
+    if (active === undefined) return Promise.resolve();
+    const session = active.runtime.session;
+    const sessionId = session.sessionId;
     this.clearCompactionPromptQueue(sessionId);
-    clearSessionQueue(active.runtime.session);
+    clearSessionQueue(session);
     // Settle run-scoped dialogs now, at abort-request time: pi's agent loop
     // waits for a parked `tool_call` dialog handler before it can emit
     // `agent_end`, so leaving settlement to the `agent_end` observer would
     // strand the dialog until its timeout. Settling before the runtime abort
     // also means a failing or hung abort cannot strand the parked waiter.
     this.abortRunScopedExtensionDialogs(sessionId);
-    try {
-      await this.abortSessionOperations(active.runtime.session);
-      this.publishActivity(active.runtime.session, "stopped", "idle");
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.publishActivity(active.runtime.session, "stop failed", "error", message);
-      throw error;
-    } finally {
-      this.publishStatus(active.runtime.session);
-    }
+    // AgentSession.abort() first signals cancellation, then waits for every
+    // tool to settle. A third-party tool can ignore cancellation indefinitely;
+    // that must never make the user's Stop request hang behind its work.
+    this.publishActivity(session, "stop requested", "active");
+    this.requestAbort(session);
+    return Promise.resolve();
   }
 
   async stop(ref: PiSessionRef): Promise<void> {
@@ -3241,6 +3240,26 @@ export class PiSessionService implements SessionRouteService {
       await this.abortSessionOperations(active.runtime.session);
     } finally {
       await active.runtime.dispose();
+    }
+  }
+
+  private requestAbort(session: PiAgentSession): void {
+    if (this.pendingAbortRequests.has(session)) return;
+    const operation = this.abortSessionOperations(session);
+    this.pendingAbortRequests.set(session, operation);
+    void this.observeAbort(session, operation);
+  }
+
+  private async observeAbort(session: PiAgentSession, operation: Promise<void>): Promise<void> {
+    try {
+      await operation;
+      this.publishActivity(session, "stopped", "idle");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.publishActivity(session, "stop failed", "error", message);
+    } finally {
+      if (this.pendingAbortRequests.get(session) === operation) this.pendingAbortRequests.delete(session);
+      this.publishStatus(session);
     }
   }
 

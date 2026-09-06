@@ -531,15 +531,23 @@ describe("PiSessionService session-tree behavior", () => {
       navigation.resolve({ cancelled: true, aborted: true });
       return Promise.resolve();
     });
-    const { service } = treeHarness({}, { navigateTree, abortBranchSummary, abort });
+    const { service, hub } = treeHarness({}, { navigateTree, abortBranchSummary, abort });
 
     const navigationResult = service.navigateTree(sessionRef(SESSION_ID), navigationRequest({ mode: "default" }));
     await vi.waitFor(() => { expect(navigateTree).toHaveBeenCalledOnce(); });
-    await expect(service.abort(sessionRef(SESSION_ID))).rejects.toBe(branchAbortFailure);
+    await expect(service.abort(sessionRef(SESSION_ID))).resolves.toBeUndefined();
     await expect(navigationResult).resolves.toEqual({ cancelled: true, aborted: true });
 
     expect(abortBranchSummary).toHaveBeenCalledOnce();
     expect(abort).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(hub.sessionEvents.some(({ event }) =>
+        event.type === "activity.update"
+        && event.activity.label === "stop failed"
+        && event.activity.phase === "error"
+        && event.activity.detail === branchAbortFailure.message,
+      )).toBe(true);
+    });
     await expect(service.prompt(sessionRef(SESSION_ID), "gate released after abort failure")).resolves.toBeUndefined();
     abortBranchSummary.mockImplementation(() => undefined);
     await service.dispose();

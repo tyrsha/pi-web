@@ -424,32 +424,34 @@ describe("PiSessionService extension dialog abort request", () => {
     await service.dispose();
   });
 
-  it("settles the dialog before the runtime abort completes, so a parked handler cannot deadlock it", async () => {
+  it("returns after signalling cancellation, rather than waiting for a parked runtime abort", async () => {
     const { service, store, fake } = dialogService();
     const ui = await boundUiContext(service, fake);
     fake.session.isStreaming = true;
-    // Model pi's agent loop parked behind the dialog handler: the runtime
-    // abort can only finish once the handler (and so the dialog) has ended.
+    // Model a third-party tool that ignores cancellation. The Stop request
+    // must still return so the browser is never held behind that tool.
     const healthyAbort: typeof fake.session.abort = () => Promise.resolve();
     let releaseAbort: (() => void) | undefined;
-    fake.session.abort = () =>
-      new Promise<void>((resolve) => {
-        releaseAbort = resolve;
-      });
+    const abort = vi.fn(() => new Promise<void>((resolve) => {
+      releaseAbort = resolve;
+    }));
+    fake.session.abort = abort;
     const consent = ui.confirm("Run consent", "Allow this tool call?");
 
-    const aborting = service.abort(sessionRef(ACTIVE_SESSION_ID));
+    await expect(service.abort(sessionRef(ACTIVE_SESSION_ID))).resolves.toBeUndefined();
+    await service.abort(sessionRef(ACTIVE_SESSION_ID));
 
     await expect(consent).resolves.toBe(false);
     expect(store.pendingDialogs(ACTIVE_SESSION_ID)).toEqual([]);
+    expect(abort).toHaveBeenCalledOnce();
     if (releaseAbort === undefined) throw new Error("runtime abort was not requested");
     releaseAbort();
-    await aborting;
+    await Promise.resolve();
     fake.session.abort = healthyAbort;
     await service.dispose();
   });
 
-  it("settles the dialog even when the runtime abort itself fails", async () => {
+  it("reports a runtime abort failure asynchronously without blocking the stop request", async () => {
     const { service, store, events, fake } = dialogService();
     const ui = await boundUiContext(service, fake);
     fake.session.isStreaming = true;
@@ -457,9 +459,17 @@ describe("PiSessionService extension dialog abort request", () => {
     fake.session.abort = () => Promise.reject(new Error("abort blew up"));
     const consent = ui.confirm("Run consent", "Allow this tool call?");
 
-    await expect(service.abort(sessionRef(ACTIVE_SESSION_ID))).rejects.toThrow("abort blew up");
+    await expect(service.abort(sessionRef(ACTIVE_SESSION_ID))).resolves.toBeUndefined();
 
     await expect(consent).resolves.toBe(false);
+    await vi.waitFor(() => {
+      expect(events.sessionEvents.some(({ event }) =>
+        event.type === "activity.update"
+        && event.activity.label === "stop failed"
+        && event.activity.phase === "error"
+        && event.activity.detail === "abort blew up",
+      )).toBe(true);
+    });
     expect(store.pendingDialogs(ACTIVE_SESSION_ID)).toEqual([]);
     expect(dialogEvents(events).map(({ event }) => event)).toEqual([
       { type: "dialog.opened", dialog: openDialog(events) },

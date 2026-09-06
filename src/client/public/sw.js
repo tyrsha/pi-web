@@ -76,24 +76,20 @@ self.addEventListener("notificationclick", (event) => {
     }
     // The cwd stays as fallback for pages that only understand the pre-ids join.
     if (target.cwd !== "") targetUrl.searchParams.set("cwd", target.cwd);
+    // Do not wait for a suspended client's navigation or focus before opening the session.
+    // The browser decides whether to create or reuse a window; neither is guaranteed.
+    event.waitUntil(self.clients.openWindow(targetUrl.toString()));
+    return;
   }
   event.waitUntil((async () => {
-    // Reuse one window: opening a fresh document per tap piles up full app boots
-    // (sockets, snapshots, memory) until iOS jetsams and the visible PWA freezes on
-    // stale UI. With resume timeouts in place, focusing a suspended document recovers
-    // through the refresh cycle instead of wedging.
     const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const client of clients) {
       try {
-        if (target.sessionId !== "" && client.url !== targetUrl.toString()) {
-          await client.navigate(targetUrl.toString());
-        }
         await client.focus();
         return;
       } catch {
         continue; // Unreachable clients are skipped; the next one wins.
       }
     }
-    if (target.sessionId !== "") return self.clients.openWindow(targetUrl.toString());
   })());
 });
