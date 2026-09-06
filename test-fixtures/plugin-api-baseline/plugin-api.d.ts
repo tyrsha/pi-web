@@ -28,6 +28,8 @@ export interface PluginContributions {
     actions?: PluginAction[];
     workspacePanels?: WorkspacePanelContribution[];
     workspaceLabels?: WorkspaceLabelContribution[];
+    /** Replace the default project list with a plugin-owned renderer. */
+    projectList?: ProjectListContribution;
     themes?: ThemeContribution[];
     themePairs?: ThemePairContribution[];
 }
@@ -35,6 +37,64 @@ export interface PluginMachine {
     id: string;
     name: string;
     kind: MachineKind;
+}
+/** Namespaced plugin settings, persisted with the machine's global PI WEB configuration. */
+export interface PluginSettings {
+    read(machine: PluginMachine): Promise<Record<string, unknown> | undefined>;
+    write(machine: PluginMachine, value: Record<string, unknown>): Promise<void>;
+}
+/** Adds optional actions to the host-owned project action menu. */
+export interface ProjectListContribution {
+    id: LocalContributionId;
+    order?: number;
+    renderActions?: (context: ProjectListActionContext) => TemplateResult;
+    /** Return a group name to render this project under a collapsible group heading. */
+    group?: (context: ProjectListActionContext) => string | undefined;
+    /** Return a stable project order within its group. */
+    sort?: (context: ProjectListActionContext) => number | undefined;
+    /** Return a stable order for a group heading. */
+    groupOrder?: (group: string, context: ProjectListContext) => number | undefined;
+    onSelect?: (context: ProjectListActionContext) => void | Promise<void>;
+    onMoveProject?: (context: ProjectListMoveContext) => void | Promise<void>;
+    onMoveGroup?: (context: ProjectListGroupMoveContext) => void | Promise<void>;
+}
+/** Host-owned project-list data for an action-menu extension. */
+export interface ProjectListContext {
+    readonly machine: PluginMachine;
+    /** Settings namespace owned by the renderer's plugin. */
+    readonly settings: PluginSettings;
+    readonly projects: readonly Project[];
+    readonly selectedProject?: Project;
+    selectProject(project: Project): void | Promise<void>;
+    /** Ask the host to close a project, preserving its confirmation behavior. */
+    requestCloseProject(project: Project): void | Promise<void>;
+    requestRender(): void;
+}
+export interface ProjectListActionContext extends ProjectListContext {
+    readonly project: Project;
+}
+export type ProjectListMoveTarget = {
+    readonly type: "group";
+    readonly group: string;
+} | {
+    readonly type: "project";
+    readonly project: Project;
+    readonly position: "before" | "after";
+};
+export interface ProjectListMoveContext extends ProjectListContext {
+    readonly project: Project;
+    readonly target: ProjectListMoveTarget;
+}
+export interface ProjectListGroupMoveContext extends ProjectListContext {
+    readonly group: string;
+    readonly targetGroup: string;
+    readonly position: "before" | "after";
+}
+export interface Project {
+    readonly id: string;
+    readonly name: string;
+    readonly path: string;
+    readonly createdAt: string;
 }
 export interface PluginRuntimeState {
     /** Identity of the currently selected machine. Undefined only on older hosts or before machines load. */

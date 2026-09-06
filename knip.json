@@ -8,6 +8,7 @@
     "pi-web-plugins/**/pi-web-plugin.ts",
     "pi-web-plugins/**/server-plugin.ts",
     "pi-packages/**/pi-web-plugin.ts",
+    "pi-packages/**/extensions/*.ts",
     "scripts/*.mjs"
   ],
   "project": [

@@ -2,7 +2,7 @@ import { LitElement, css, html } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
 import type { Machine, MachineHealth, Project, SessionActivity, SessionInfo, SessionStatus, Workspace } from "../../api";
 import type { MachineStatusSnapshot } from "../../../../shared/machineStatus";
-import type { WorkspaceLabelItem } from "../../plugins/types";
+import type { PluginMachine, PluginSettings, ProjectListContribution, WorkspaceLabelItem } from "../../plugins/types";
 import { selectedMachineId } from "../../controllers/types";
 import type { NavigationSection } from "../../appShell/navigationState";
 import { NAVIGATION_SECTION_ORDER } from "../../appShell/navigationState";
@@ -25,6 +25,8 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) machineStatusSnapshots: Record<string, MachineStatusSnapshot> = {};
   @property({ attribute: false }) projects: Project[] = [];
   @property({ attribute: false }) selectedProject?: Project;
+  @property({ attribute: false }) projectListExtension?: ProjectListContribution;
+  @property({ attribute: false }) projectListSettings?: PluginSettings;
   @property({ attribute: false }) workspaces: Workspace[] = [];
   @property({ attribute: false }) selectedWorkspace?: Workspace;
   @property({ attribute: false }) sessions: SessionInfo[] = [];
@@ -128,6 +130,9 @@ export class AppNavigationPanel extends LitElement {
         .projects=${this.projects}
         .selected=${this.selectedProject}
         .statusSnapshot=${this.selectedMachineStatusSnapshot()}
+        .machine=${this.projectListMachine()}
+        .settings=${this.projectListSettings}
+        .extension=${this.projectListExtension}
         .collapsible=${this.collapsible}
         .collapsed=${this.projectsCollapsed}
         .onToggleCollapsed=${() => { this.onToggleProjects?.(); }}
@@ -196,6 +201,11 @@ export class AppNavigationPanel extends LitElement {
    */
   private selectedMachineStatusSnapshot(): MachineStatusSnapshot | undefined {
     return this.machineStatusSnapshots[selectedMachineId({ selectedMachine: this.selectedMachine })];
+  }
+
+  private projectListMachine(): PluginMachine {
+    const machine = this.selectedMachine;
+    return machine === undefined ? { id: "local", name: "local", kind: "local" } : { id: machine.id, name: machine.name, kind: machine.kind };
   }
 
   private async focusNavigableSection(section: KeyboardNavigableSection | undefined): Promise<boolean> {

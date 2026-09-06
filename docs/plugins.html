@@ -407,6 +407,19 @@ import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/se
                 <code>plugins</code> config key.
               </p>
 
+              <h3>Project Organizer</h3>
+              <p>
+                <strong>Project Organizer</strong> adds Group actions to the existing project action menus. Grouped
+                projects appear under collapsible headings; dragging onto a group moves a project into it, dragging
+                before/after another project changes its order, and dragging group headings changes group order. Standard
+                project rows, responsive layout, and keyboard navigation stay intact. Metadata is stored in the selected
+                machine's global PI WEB config, never in a project directory.
+              </p>
+              <ul>
+                <li>Plugin id: <code>project-organizer</code></li>
+                <li>Disable it in <strong>Settings → PI WEB plugins</strong> to restore the built-in project list.</li>
+              </ul>
+
               <h3>Git</h3>
               <p>
                 <strong>Git</strong> is enabled by default and is PI WEB's bundled fallback workspace provider. It

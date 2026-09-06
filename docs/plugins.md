@@ -304,6 +304,22 @@ PI WEB ships core, discoverable plugins in the main `@jmfederico/pi-web` npm pac
 
 Built-in plugins can be managed from **Settings → PI WEB plugins** or with the top-level `plugins` config key.
 
+### Project Organizer
+
+**Plugin id:** `project-organizer`
+
+**What it does:** adds group assignment, grouped display, group collapsing, and drag-reordering to the existing project list without replacing the host's standard project rows or layout. Recent-project timestamps are recorded for organizer metadata. Organizer metadata is stored globally per selected machine at `plugins.project-organizer.settings`; project folders are never changed.
+
+The plugin is enabled by default. Disable it from **Settings → PI WEB plugins** to return to the built-in project list, or set:
+
+```json
+{
+  "plugins": {
+    "project-organizer": { "enabled": false }
+  }
+}
+```
+
 ### Git
 
 **Plugin id:** `git`
@@ -678,15 +694,60 @@ The only supported plugin type entrypoints are the type-only package exports `@j
 
 ## Contributions
 
-The workspace-related contribution arrays returned by `activate()` are:
+The contribution fields returned by `activate()` are:
 
 ```ts
 interface PluginContributions {
   actions?: PluginAction[];
+  projectList?: ProjectListContribution;
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
 }
 ```
+
+### Project-list action menus
+
+A browser plugin can add actions to the existing project action menu without replacing the host-owned project rows, headings, responsive layout, status indicators, or keyboard navigation.
+
+```ts
+interface ProjectListContribution {
+  id: string;
+  order?: number;
+  renderActions?(context: ProjectListActionContext): TemplateResult;
+  group?(context: ProjectListActionContext): string | undefined;
+  sort?(context: ProjectListActionContext): number | undefined;
+  groupOrder?(group: string, context: ProjectListContext): number | undefined;
+  onSelect?(context: ProjectListActionContext): void | Promise<void>;
+  onMoveProject?(context: ProjectListMoveContext): void | Promise<void>;
+  onMoveGroup?(context: ProjectListGroupMoveContext): void | Promise<void>;
+}
+
+interface ProjectListActionContext {
+  machine: PluginMachine;
+  settings: PluginSettings;
+  projects: readonly Project[];
+  selectedProject?: Project;
+  project: Project;
+  selectProject(project: Project): void | Promise<void>;
+  requestCloseProject(project: Project): void | Promise<void>;
+  requestRender(): void;
+}
+
+type ProjectListMoveTarget =
+  | { type: "group"; group: string }
+  | { type: "project"; project: Project; position: "before" | "after" };
+
+interface ProjectListMoveContext extends ProjectListActionContext {
+  target: ProjectListMoveTarget;
+}
+```
+
+`renderActions()` is rendered inside the standard `Project actions` menu. `onSelect()` observes project selection, which is useful for lightweight metadata such as recent timestamps. Multiple active contributions are ordered by `order` and contribution id. Keep menu actions short and move complex workflows into a panel or dialog.
+
+`settings` is a generic, plugin-namespaced JSON-object store backed by `plugins.<plugin-id>.settings` in the selected machine's global PI WEB config. It never writes project source directories. Use `settings.read(machine)` and `settings.write(machine, value)` from explicit user interactions; preserve the current machine passed by the context so remote-machine metadata stays remote.
+
+The bundled **Project Organizer** plugin uses this surface to add Group actions to the existing project menus. Projects with a group are displayed under a collapsible group heading while the host-owned project rows remain unchanged. Drag a project onto a group heading to move it into that group, drag it before/after another project to reorder it within the group, or drag a group heading before/after another group to reorder groups. Recent-project timestamps are recorded when a project is selected. Its metadata is keyed by project path under `plugins.project-organizer.settings.projects` and group order under `groupOrder`.
+
 
 ### Actions
 

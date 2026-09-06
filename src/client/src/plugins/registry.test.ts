@@ -67,6 +67,22 @@ describe("PluginRegistry", () => {
     expect(registry.getWorkspacePanels().map((panel) => panel.id)).toEqual(["core:workspace.files", "core:workspace.terminal"]);
   });
 
+  it("selects the active custom project-list renderer by order", () => {
+    const registry = new PluginRegistry();
+    registry.register({
+      id: "later",
+      plugin: { apiVersion: 2, name: "Later", activate: () => ({ contributions: { projectList: { id: "projects", order: 20, render: () => html`<p>Later</p>` } } }) },
+    });
+    registry.register({
+      id: "first",
+      plugin: { apiVersion: 2, name: "First", activate: () => ({ contributions: { projectList: { id: "projects", order: 10, render: () => html`<p>First</p>` } } }) },
+    });
+
+    const extension = registry.getProjectListExtension(createContext().context);
+
+    expect(extension).toMatchObject({ id: "first:projects", pluginId: "first", localId: "projects" });
+  });
+
   it("rejects legacy browser plugins with an attributed API-version error", () => {
     const registry = new PluginRegistry();
     const legacyPlugin: PiWebPlugin = {
