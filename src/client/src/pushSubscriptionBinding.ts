@@ -128,7 +128,10 @@ export class PushSubscriptionBinding {
       }
     } finally {
       this.draining = false;
-      if (this.enabled && this.desired !== undefined && JSON.stringify(this.desired) !== this.lastSentKey) void this.drain();
+      // The loop already consumes target changes after successful requests. On
+      // failure, wait for the next sync/enable/invalidate signal instead of
+      // recursively retrying: immediately rejected browser APIs can otherwise
+      // create an endless microtask chain that starves rendering and input.
     }
   }
 
@@ -143,5 +146,6 @@ function browserBindingDependencies(): PushSubscriptionBindingDependencies {
     subscribe: (subscription) => pushApi.subscribe(subscription),
     instanceId: () => pwaPushInstanceId(),
     isEnabled: () => isPwaPushSubscriptionEnabled(),
+    onError: (error) => { console.warn("Failed to synchronize PWA push subscription", error); },
   };
 }
