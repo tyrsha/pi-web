@@ -1,0 +1,31 @@
+{
+  "name": "@pi-web/autostudio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Autonomous project-manager loop for Pi: MISSION/ROADMAP-driven task selection with visible fresh-context worker sessions.",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./node_modules/pi-subagents/index.ts",
+      "./extensions/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
+  },
+  "dependencies": {
+    "pi-subagents": "0.64.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  }
+}

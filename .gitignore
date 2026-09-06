@@ -15,6 +15,9 @@ dist/
 # Local runtime attachment uploads (created by the chat composer "save to folder" mode).
 .pi-web/
 
+# Autostudio autonomous-manager runtime state (MISSION/ROADMAP/STATE, worker logs).
+.autostudio/
+
 # Dev docs site staging output (scripts/build-docs-dev.mjs).
 /docs/.deploy/
 .gstack/
