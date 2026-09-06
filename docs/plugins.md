@@ -139,7 +139,12 @@ Keep gateways and targets compatible. During this plugin API transition, upgrade
 - **Mermaid** uses the default manual mode: choose **Render** to preview `mermaid` fences and `.mmd`/`.mermaid` text files. Its bundled engine runs locally in an opaque-origin sandbox with network access blocked; no diagram service receives your source. Interactive links and external resources are intentionally unavailable. Disable Mermaid in plugin Settings to keep plain code rendering. Only a browser reload is needed after changing this browser-only plugin.
 - **Info** displays PI WEB status and copyable diagnostics.
 - **Updates** shows update/restart guidance when relevant and offers a manual update check.
+- **Project Organizer** adds project grouping and ordering to the existing project list.
 - **Workspace Tasks** turns project commands into runnable buttons.
+
+### Project Organizer
+
+The bundled `project-organizer` browser plugin adds Group actions to project menus. Drag projects and groups by their handles to reorder them; collapsed groups and recent-project timestamps are kept in the selected machine's `plugins.project-organizer.settings` configuration. Project directories are not changed. Disable the plugin in **Settings → PI WEB plugins** to use the standard project list. See the [public project-list API](https://github.com/jmfederico/pi-web/blob/main/src/plugin-api.ts) to build a different extension.
 
 ### Workspace Tasks
 

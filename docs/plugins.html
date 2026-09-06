@@ -244,8 +244,11 @@ ln -s /path/to/plugin-folder ~/.pi-web/plugins/my-plugin</code></pre></div>
 <li><strong>Mermaid</strong> uses the default manual mode: choose <strong>Render</strong> to preview <code>mermaid</code> fences and <code>.mmd</code>/<code>.mermaid</code> text files. Its bundled engine runs locally in an opaque-origin sandbox with network access blocked; no diagram service receives your source. Interactive links and external resources are intentionally unavailable. Disable Mermaid in plugin Settings to keep plain code rendering. Only a browser reload is needed after changing this browser-only plugin.</li>
 <li><strong>Info</strong> displays PI WEB status and copyable diagnostics.</li>
 <li><strong>Updates</strong> shows update/restart guidance when relevant and offers a manual update check.</li>
+<li><strong>Project Organizer</strong> adds project grouping and ordering to the existing project list.</li>
 <li><strong>Workspace Tasks</strong> turns project commands into runnable buttons.</li>
 </ul>
+<h3 id="project-organizer">Project Organizer</h3>
+<p>The bundled <code>project-organizer</code> browser plugin adds Group actions to project menus. Drag projects and groups by their handles to reorder them; collapsed groups and recent-project timestamps are kept in the selected machine&#39;s <code>plugins.project-organizer.settings</code> configuration. Project directories are not changed. Disable the plugin in <strong>Settings → PI WEB plugins</strong> to use the standard project list. See the <a href="https://github.com/jmfederico/pi-web/blob/main/src/plugin-api.ts">public project-list API</a> to build a different extension.</p>
 <h3 id="workspace-tasks">Workspace Tasks</h3>
 <p>Create <code>.pi-web/tasks.json</code> in a project:</p>
 <div class="code-card"><div class="copy-row"><strong>Example</strong><button class="copy-button" data-copy="#plugin-example-3">Copy</button></div><pre id="plugin-example-3"><code>{

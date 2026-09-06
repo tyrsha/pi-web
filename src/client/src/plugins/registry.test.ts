@@ -223,8 +223,20 @@ describe("PluginRegistry", () => {
     expect(actionRun).toHaveBeenCalledOnce();
   });
 
-  it("rejects legacy browser plugins with an attributed API-version error", async () => {
+  it("selects the active project-list extension by order", async () => {
     const registry = new PluginRegistry();
+    await registry.register({
+      id: "later",
+      plugin: { apiVersion: 4, name: "Later", activate: () => ({ contributions: { projectList: { id: "projects", order: 20 } } }) },
+    });
+    await registry.register({
+      id: "first",
+      plugin: { apiVersion: 4, name: "First", activate: () => ({ contributions: { projectList: { id: "projects", order: 10 } } }) },
+    });
+    expect(registry.getProjectListExtension(createContext().context)).toMatchObject({ id: "first:projects", pluginId: "first", localId: "projects" });
+  });
+
+  it("rejects legacy browser plugins with an attributed API-version error", async () => {    const registry = new PluginRegistry();
     const legacyPlugin: PiWebPlugin = {
       apiVersion: 4,
       name: "Legacy",

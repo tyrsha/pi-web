@@ -3,8 +3,7 @@ import type { ContentRenderRequest } from "../../../plugin-api";
 import { compareContentRenderers, contentRendererMatches, snapshotContentRenderer, type ContentRendererChoice, type RegisteredContentRenderer } from "./contentRenderers";
 import { createContentRenderingService, contentRenderingCapabilityToken } from "../formatting/contentRendering";
 import { requirePluginBackendRevision } from "../../../shared/pluginBackendProtocol";
-import type { PiWebPluginRegistration, PiWebPluginRegistrationDeclaration, PluginAction, PluginActivationContext, PluginActivationResult, PluginCapability, PluginCapabilityProvision, PluginContributions, PluginRuntimeContext, PluginStartContext, QualifiedContributionId, QualifiedPluginAction, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspaceLabelContribution, QualifiedWorkspacePanelContribution, ThemeContribution, ThemePairContribution, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelContribution, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding, WorkspaceResource } from "./types";
-
+import type { PiWebPluginRegistration, PiWebPluginRegistrationDeclaration, PluginAction, PluginActivationContext, PluginActivationResult, PluginCapability, PluginCapabilityProvision, PluginContributions, PluginRuntimeContext, PluginStartContext, ProjectListContribution, QualifiedContributionId, QualifiedProjectListContribution, QualifiedPluginAction, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspaceLabelContribution, QualifiedWorkspacePanelContribution, ThemeContribution, ThemePairContribution, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelContribution, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding, WorkspaceResource } from "./types";
 const idPattern = /^[a-z][a-z0-9.-]*$/u;
 const localIdPattern = /^[a-z][a-z0-9.-]*$/u;
 const qualifiedContributionIdPattern = /^[a-z][a-z0-9.-]*:[a-z][a-z0-9.-]*$/u;
@@ -74,6 +73,7 @@ interface PreparedPluginContributions {
   readonly contentRenderers: readonly RegisteredContentRenderer[];
   readonly ids: ReadonlySet<QualifiedContributionId>;
   readonly actions: readonly RegisteredPluginAction[];
+  readonly projectList: QualifiedProjectListContribution | undefined;
   readonly workspacePanels: readonly QualifiedWorkspacePanelContribution[];
   readonly workspaceLabels: readonly QualifiedWorkspaceLabelContribution[];
   readonly themes: readonly QualifiedThemeContribution[];
@@ -121,6 +121,7 @@ export class PluginRegistry {
       .map((renderer) => ({ id: renderer.id, label: renderer.label, renderer }));
   }
   private readonly actions: RegisteredPluginAction[] = [];
+  private readonly projectLists: QualifiedProjectListContribution[] = [];
   private readonly workspacePanels: QualifiedWorkspacePanelContribution[] = [];
   private readonly workspaceLabels: QualifiedWorkspaceLabelContribution[] = [];
   private readonly themes: QualifiedThemeContribution[] = [];
@@ -147,8 +148,7 @@ export class PluginRegistry {
     for (const provision of snapshotCapabilityProvisions([{ capability: contentRenderingCapabilityToken, value: this.contentRendering }, ...(options.hostCapabilities ?? [])], undefined, "Browser host capability provisions")) {
       const internal = internalCapabilityProvision(provision);
       if (this.hostCapabilitiesByKey.has(internal.key)) {
-        throw new BrowserPluginIncompatibleError(`Browser capability ${formatCapability(internal.capability)} is provided more than once by the host`);
-      }
+        throw new BrowserPluginIncompatibleError(`Browser capability ${formatCapability(internal.capability)} is provided more than once by the host`);      }
       this.hostCapabilitiesByKey.set(internal.key, internal);
     }
   }
@@ -204,6 +204,7 @@ export class PluginRegistry {
     this.hostCapabilitySnapshotsByRegistration.clear();
     this.pluginIds.clear();
     this.actions.splice(0);
+    this.projectLists.splice(0);
     this.contentRenderers.splice(0);
     this.workspacePanels.splice(0);
     this.workspaceLabels.splice(0);
@@ -405,6 +406,7 @@ export class PluginRegistry {
       };
     });
     const actions = (contributions.actions ?? []).map((action) => this.qualifyAction(runtimePluginId, action, registration.machineId, registration.sourcePluginId, contributionIds));
+    const projectList = contributions.projectList === undefined ? undefined : this.qualifyProjectList(runtimePluginId, contributions.projectList, registration.machineId, registration.sourcePluginId, contributionIds);
     const workspacePanels = (contributions.workspacePanels ?? []).map((panel) => this.qualifyWorkspacePanel(runtimePluginId, panel, registration.machineId, registration.sourcePluginId, backendRevision, pairedRequestVersion, pairedChannelVersion, contributionIds));
     const workspaceLabels = (contributions.workspaceLabels ?? []).map((contribution) => this.qualifyWorkspaceLabelContribution(runtimePluginId, contribution, registration.machineId, registration.sourcePluginId, backendRevision, pairedRequestVersion, pairedChannelVersion, contributionIds));
     const themes = registration.machineId === undefined
@@ -413,7 +415,7 @@ export class PluginRegistry {
     const themePairs = registration.machineId === undefined
       ? (contributions.themePairs ?? []).map((pair) => this.qualifyThemePair(runtimePluginId, pair, contributionIds))
       : [];
-    return Object.freeze({ ids: contributionIds, contentRenderers, actions, workspacePanels, workspaceLabels, themes, themePairs });
+    return Object.freeze({ ids: contributionIds, contentRenderers, actions, projectList, workspacePanels, workspaceLabels, themes, themePairs });
   }
 
   private dependencyFailure(
@@ -519,6 +521,7 @@ export class PluginRegistry {
     for (const contributionId of staged.contributions.ids) this.contributionIds.add(contributionId);
     this.contentRenderers.push(...staged.contributions.contentRenderers);
     this.actions.push(...staged.contributions.actions);
+    if (staged.contributions.projectList !== undefined) this.projectLists.push(staged.contributions.projectList);
     this.workspacePanels.push(...staged.contributions.workspacePanels);
     this.workspaceLabels.push(...staged.contributions.workspaceLabels);
     this.themes.push(...staged.contributions.themes);
@@ -688,6 +691,12 @@ export class PluginRegistry {
     return undefined;
   }
 
+  getProjectListExtension(context: PluginRuntimeContext): QualifiedProjectListContribution | undefined {
+    const selectedMachineId = runtimeContextMachineId(context);
+    return this.projectLists
+      .filter((contribution) => this.isContributionActive(contribution.pluginId, contribution.machineId, selectedMachineId, contribution.sourcePluginId))
+      .sort((left, right) => (left.order ?? 1000) - (right.order ?? 1000) || left.id.localeCompare(right.id))[0];  }
+
   resolveWorkspacePanelRouteId(value: string, selectedMachineId: string): QualifiedContributionId | undefined {
     const activePanels = this.workspacePanels.filter((panel) => this.isContributionActive(panel.pluginId, panel.machineId, selectedMachineId, panel.sourcePluginId));
     const exact = activePanels.find((panel) => panel.id === value);
@@ -767,6 +776,24 @@ export class PluginRegistry {
       pluginId,
       localId: action.id,
       ...(shortcutAliases.length === 0 ? {} : { shortcutAliases }),
+      ...(machineId === undefined ? {} : { machineId }),
+      ...(sourcePluginId === undefined ? {} : { sourcePluginId }),
+    };
+  }
+
+  private qualifyProjectList(
+    pluginId: string,
+    contribution: ProjectListContribution,
+    machineId: string | undefined,
+    sourcePluginId: string | undefined,
+    contributionIds: Set<QualifiedContributionId>,
+  ): QualifiedProjectListContribution {
+    const id = this.qualify(pluginId, contribution.id, contributionIds);
+    return {
+      ...contribution,
+      id,
+      pluginId,
+      localId: contribution.id,
       ...(machineId === undefined ? {} : { machineId }),
       ...(sourcePluginId === undefined ? {} : { sourcePluginId }),
     };

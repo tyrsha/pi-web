@@ -1,8 +1,7 @@
 import type { TemplateResult } from "lit";
 import type { AppAction } from "../actions";
-import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, JsonValue, Machine, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace } from "../api";
-import type { PluginCapability, PluginCapabilityProvision } from "../../../shared/pluginApiTypes";
-import type { AppState } from "../appState";
+import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, JsonValue, Machine, Project, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace } from "../api";
+import type { PluginCapability, PluginCapabilityProvision } from "../../../shared/pluginApiTypes";import type { AppState } from "../appState";
 import type { SettingsSection } from "../settingsRoute";
 import type { LocalContributionId, PluginId, QualifiedContributionId } from "./ids";
 
@@ -80,6 +79,7 @@ export interface PluginContributions {
   actions?: PluginAction[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
+  projectList?: ProjectListContribution;
   themes?: ThemeContribution[];
   themePairs?: ThemePairContribution[];
 }
@@ -116,6 +116,60 @@ export interface WorkspaceFileUploadTask {
   readonly path: string;
   readonly completed: Promise<WriteWorkspaceFileResponse>;
   cancel(): void;
+}
+
+export interface PluginSettings {
+  read(machine: PluginMachine): Promise<Record<string, unknown> | undefined>;
+  write(machine: PluginMachine, value: Record<string, unknown>): Promise<void>;
+}
+
+export interface ProjectListContext {
+  machine: PluginMachine;
+  settings: PluginSettings;
+  projects: readonly Project[];
+  selectedProject?: Project;
+  selectProject(project: Project): void | Promise<void>;
+  requestCloseProject(project: Project): void | Promise<void>;
+  requestRender(): void;
+}
+
+export interface ProjectListContribution {
+  id: LocalContributionId;
+  order?: number;
+  renderActions?: (context: ProjectListActionContext) => TemplateResult;
+  group?: (context: ProjectListActionContext) => string | undefined;
+  sort?: (context: ProjectListActionContext) => number | undefined;
+  groupOrder?: (group: string, context: ProjectListContext) => number | undefined;
+  onSelect?: (context: ProjectListActionContext) => void | Promise<void>;
+  onMoveProject?: (context: ProjectListMoveContext) => void | Promise<void>;
+  onMoveGroup?: (context: ProjectListGroupMoveContext) => void | Promise<void>;
+}
+
+export interface ProjectListActionContext extends ProjectListContext {
+  project: Project;
+}
+
+export type ProjectListMoveTarget =
+  | { type: "group"; group: string }
+  | { type: "project"; project: Project; position: "before" | "after" };
+
+export interface ProjectListMoveContext extends ProjectListContext {
+  project: Project;
+  target: ProjectListMoveTarget;
+}
+
+export interface ProjectListGroupMoveContext extends ProjectListContext {
+  group: string;
+  targetGroup: string;
+  position: "before" | "after";
+}
+
+export interface QualifiedProjectListContribution extends ProjectListContribution {
+  id: QualifiedContributionId;
+  pluginId: PluginId;
+  localId: LocalContributionId;
+  machineId?: string;
+  sourcePluginId?: PluginId;
 }
 
 export interface WorkspaceFiles {
