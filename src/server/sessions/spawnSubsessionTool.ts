@@ -26,6 +26,8 @@ export interface SpawnSubsessionInvocation {
   /** Session file of the parent, recorded in the child's `parentSession` header. */
   parentSessionFile: string | undefined;
   prompt: string;
+  /** Optional display name, applied before the initial prompt starts. */
+  name?: string;
   /**
    * Requested target workspace. The tool never sets it; other callers may, and
    * anything other than {@link spawningCwd} is refused rather than retargeted.

@@ -45,10 +45,60 @@ describe("PiSessionService", () => {
         sessionManager: sessionGateway([]),
         archiveStore,
         spawnTargets: { resolveSpawnTarget: () => Promise.resolve(decision) },
+        subsessionsEnabled: true,
         heartbeatIntervalMs,
       });
       return { parent, child, children, service };
     }
+
+    it("resolves the API parent's identity and defaults, names and tracks the child before prompting", async () => {
+      const { parent, child, service } = subsessionService({ allowed: true, cwd: "/workspace" });
+      parent.session.model = testModel();
+      const spawn = vi.spyOn(service, "spawnSubsession");
+      try {
+        await service.start("/workspace");
+        const result = await service.startSubsession(sessionRef("parent-1"), { prompt: "do the slice", name: "Autostudio worker" });
+        expect(result).toEqual({ sessionId: "child-1", parentSessionId: "parent-1", cwd: "/workspace" });
+        expect(spawn).toHaveBeenCalledWith({
+          spawningCwd: "/workspace", parentSessionId: "parent-1", parentSessionFile: "/tmp/parent-1.jsonl",
+          prompt: "do the slice", name: "Autostudio worker", model: parent.session.model, thinkingLevel: "off",
+        });
+        expect(child.session.sessionName).toBe("Autostudio worker");
+        expect(child.calls.prompt).toEqual([{ text: "do the slice", options: undefined }]);
+        await expect(service.listSubsessions("parent-1")).resolves.toEqual([{ sessionId: "child-1", cwd: "/workspace", status: "idle" }]);
+      } finally { await service.dispose(); }
+    });
+
+    it("refuses child API requests with a mismatched parent workspace", async () => {
+      const { child, service } = subsessionService({ allowed: true, cwd: "/workspace" });
+      try {
+        await service.start("/workspace");
+        await expect(service.startSubsession(sessionRef("parent-1", "/other"), { prompt: "task" })).rejects.toThrow();
+        expect(child.calls.prompt).toEqual([]);
+        await expect(service.listSubsessions("parent-1")).resolves.toEqual([]);
+      } finally { await service.dispose(); }
+    });
+
+    it("cannot bypass the tracked-child delegation restriction through HTTP", async () => {
+      const { service } = subsessionService({ allowed: true, cwd: "/workspace" });
+      try {
+        await service.start("/workspace");
+        await service.startSubsession(sessionRef("parent-1"), { prompt: "task" });
+        await expect(service.startSubsession(sessionRef("child-1"), { prompt: "grandchild" })).rejects.toThrow("cannot delegate");
+      } finally { await service.dispose(); }
+    });
+
+    it("keeps the child API disabled when the subsessions capability is off", async () => {
+      const service = new PiSessionService(new CapturingSessionEventHub(), {
+        agentDir: TEST_AGENT_DIR, modelRuntime: testModelRuntime,
+        spawnTargets: { resolveSpawnTarget: () => Promise.resolve({ allowed: true, cwd: "/workspace" }) },
+        subsessionsEnabled: false, heartbeatIntervalMs: 60_000,
+        sessionManager: sessionGateway([]),
+      });
+      try {
+        await expect(service.startSubsession(sessionRef("parent-1"), { prompt: "task" })).rejects.toThrow("disabled");
+      } finally { await service.dispose(); }
+    });
 
     it("records the parent, delivers the prompt, and lists the tracked child", async () => {
       const { child, service } = subsessionService({ allowed: true, cwd: "/workspace" });

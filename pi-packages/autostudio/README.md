@@ -1,7 +1,7 @@
 # Autostudio
 
 Autostudio delegates fresh-context workers while keeping the manager's progress
-in the Pi Web chat. Every worker is a real Pi Web session: open its **Open session**
+in the Pi Web chat. Every worker is a tracked Pi Web subsession under its manager: open its **Open session**
 link while it runs to see its conversation and tool calls.
 
 ## Install
@@ -13,7 +13,9 @@ pi install "$PWD"
 ```
 
 Reload the extension in an idle session with `/reload`, or open a new session.
-No session-daemon restart is needed for these extension changes.
+Upgrading from independent workers also requires updating and manually restarting
+the session daemon; see [operation and limits](docs/operation.md).
+For direct `subagent` workflows, also [install or update the supplied role definitions](docs/operation.md#direct-subagent-delegation).
 
 ## Use
 

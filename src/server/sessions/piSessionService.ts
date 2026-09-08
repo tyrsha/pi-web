@@ -75,7 +75,7 @@ import type {
 } from "../../shared/apiTypes.js";
 import type { SessionDefaults, SessionDefaultsUpdate } from "../../shared/apiTypes.js";
 import { parseSessionDefaults, parseSessionDefaultsUpdate } from "../../shared/sessionDefaults.js";
-import type { SessionRouteRef, SessionRouteService } from "./sessionService.js";
+import type { SessionRouteRef, SessionRouteService, StartSubsessionRequest, StartSubsessionResult } from "./sessionService.js";
 
 import { type AuthChange } from "./authService.js";
 import { canonicalizeStoredCwd, cwdPathsEqual } from "../workingDirectory.js";
@@ -1203,6 +1203,7 @@ export class PiSessionService implements SessionRouteService {
   private readonly modelRuntime: ModelRuntime;
   private readonly workspaceActivity: Pick<WorkspaceActivityService, "applySessionStatus" | "applySessionActivity" | "removeSession" | "reconcileSessionActivity"> | undefined;
   private readonly spawnTargets: SpawnTargetResolver | undefined;
+  private readonly subsessionsEnabled: boolean;
   private readonly logger: PiSessionLogger;
   private readonly activityMarker: SessionActivityMarker;
   private readonly now: () => Date;
@@ -1257,6 +1258,7 @@ export class PiSessionService implements SessionRouteService {
     // also require the spawn capability (they share its project-scope resolver).
     const subsessionsActive = this.spawnTargets !== undefined && deps.subsessionsEnabled === true;
     this.sessionEvents = deps.sessionEvents ?? new PiSessionEventConnections();
+    this.subsessionsEnabled = subsessionsActive;
     this.createRuntime = deps.createRuntime ?? createDefaultRuntimeFactory(
       this.sessionEvents,
       this.modelRuntime,
@@ -1606,6 +1608,29 @@ export class PiSessionService implements SessionRouteService {
    * (so it shows in the session tree) and is registered so the parent is
    * notified when it stops working and can inspect it later.
    */
+  async startSubsession(ref: SessionRouteRef, request: StartSubsessionRequest): Promise<StartSubsessionResult> {
+    if (!this.subsessionsEnabled) throw new Error("Tracked subsessions are disabled");
+    const prompt = requirePromptText(request.prompt);
+    await this.assertWritable(ref);
+    const parent = await this.getOrOpen(ref);
+    return this.runSessionEntryMutation(parent, "start a tracked subsession", async () => {
+      if (this.subsessionParents.has(parent.sessionId) || !await sessionAllowsDelegationTools(parent.sessionManager, this.sessionManager)) {
+        throw new Error("Tracked subsessions cannot delegate to further sessions");
+      }
+      const created = await this.spawnSubsession({
+        spawningCwd: parent.sessionManager.getCwd(),
+        parentSessionId: parent.sessionId,
+        parentSessionFile: parent.sessionFile ?? parent.sessionManager.getSessionFile(),
+        prompt,
+        ...(parent.model === undefined ? {} : { model: parent.model }),
+        thinkingLevel: parent.thinkingLevel,
+        ...(request.model === undefined ? {} : { modelSpec: request.model }),
+        ...(request.name === undefined ? {} : { name: request.name }),
+      });
+      return { ...created, parentSessionId: parent.sessionId };
+    });
+  }
+
   async spawnSubsession(input: SpawnSubsessionInvocation): Promise<SpawnSubsessionResult> {
     if (this.spawnTargets === undefined) throw new Error("Spawning sessions is disabled");
     if (input.cwd !== undefined && input.cwd !== "" && !cwdPathsEqual(input.cwd, input.spawningCwd)) {
@@ -1638,6 +1663,7 @@ export class PiSessionService implements SessionRouteService {
     await this.registerVerifiedSubsession(link);
     this.persistSubsessionLink(link);
     this.persistSubsessionChildMarker(input.parentSessionId, created.id);
+    if (input.name !== undefined) await this.runCommand(created, `/name ${input.name}`);
     await this.prompt(created, input.prompt);
     this.logger.info(
       { parentSessionId: input.parentSessionId, sessionId: created.id, cwd: decision.cwd, promptLength: input.prompt.length },

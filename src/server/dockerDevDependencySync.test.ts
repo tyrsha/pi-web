@@ -46,6 +46,19 @@ describe("Docker development dependency synchronization", () => {
     expect(await readFile(join(fixture.targetDir, "keep-on-current-generation.txt"), "utf8")).toBe("kept\n");
   });
 
+  dockerSyncIt("keeps system tool precedence without discarding inherited tool locations", async () => {
+    const fixture = await createSyncFixture();
+    const inheritedPath = `${process.env["PATH"] ?? "/usr/bin:/bin"}:/pi-web-test-tool-fallback`;
+
+    const result = await runSync(fixture, { path: inheritedPath, reportPath: true });
+
+    expect(result.exitCode).toBe(0);
+    const actualPath = result.stdout.trim();
+    expect(actualPath.startsWith("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:")).toBe(true);
+    // Shell wrappers may prepend their own paths before the script starts.
+    expect(actualPath.endsWith(inheritedPath)).toBe(true);
+  });
+
   dockerSyncIt("fails without changing the volume when the image manifests are stale", async () => {
     const fixture = await createSyncFixture();
     await writeFile(join(fixture.workspaceDir, "package-lock.json"), '{"lockfileVersion":3,"changed":true}\n', "utf8");
@@ -85,17 +98,21 @@ async function createSyncFixture(): Promise<SyncFixture> {
   return { workspaceDir, seedDir, targetDir };
 }
 
-function runSync(fixture: SyncFixture): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+function runSync(fixture: SyncFixture, options: { path?: string; reportPath?: boolean } = {}): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolvePromise) => {
-    execFile("bash", [syncScript], {
+    const args = options.reportPath === true
+      ? ["-c", 'source "$1"; printf \'%s\\n\' "$PATH"', "dependency-sync-test", syncScript]
+      : [syncScript];
+    execFile("bash", args, {
       encoding: "utf8",
       env: {
         ...process.env,
+        PATH: options.path ?? process.env["PATH"],
         PI_WEB_DEV_WORKSPACE_DIR: fixture.workspaceDir,
         PI_WEB_DEV_DEPENDENCY_SEED_DIR: fixture.seedDir,
       },
     }, (error, stdout, stderr) => {
-      const exitCode = typeof error === "object" && error !== null && "code" in error && typeof error.code === "number" ? error.code : 0;
+      const exitCode = error === null ? 0 : typeof error.code === "number" ? error.code : 1;
       resolvePromise({ stdout, stderr, exitCode });
     });
   });

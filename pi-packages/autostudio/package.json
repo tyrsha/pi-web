@@ -9,7 +9,8 @@
   "pi": {
     "extensions": [
       "./node_modules/pi-subagents/index.ts",
-      "./extensions/index.ts"
+      "./extensions/index.ts",
+      "./extensions/directWorkers.ts"
     ],
     "skills": [
       "./skills"

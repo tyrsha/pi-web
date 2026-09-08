@@ -1,5 +1,8 @@
 ---
 name: worker
+runner: { type: external-job, provider: autostudio-pi-web }
+defaultContext: fresh
+async: true
 description: Fresh-context Autostudio worker. Completes exactly one assigned task with verification and a structured report.
 ---
 

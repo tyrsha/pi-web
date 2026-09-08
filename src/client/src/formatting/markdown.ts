@@ -10,9 +10,10 @@ const MAX_MARKDOWN_CACHE_ENTRIES = 300;
 const markdownHtmlCache = new Map<string, string>();
 
 export function toSafeMarkdownHtml(text: string, workspace?: MarkdownWorkspaceContext): string {
-  // Only workspace links depend on the effective application base, not route/query changes.
-  const key = JSON.stringify([text, workspace === undefined ? null : [
-    workspace.machineId, workspace.projectId, workspace.workspaceId, workspace.root, resolveAppUrl(""),
+  // Workspace downloads and app-relative session links depend on the deployment base.
+  const base = workspace !== undefined || text.includes("?session=") ? resolveAppUrl("") : undefined;
+  const key = JSON.stringify([text, workspace === undefined ? base : [
+    workspace.machineId, workspace.projectId, workspace.workspaceId, workspace.root, base,
   ]]);
   const cached = markdownHtmlCache.get(key);
   if (cached !== undefined) return cached;
@@ -51,7 +52,11 @@ function sanitizeHtml(html: string, workspace?: MarkdownWorkspaceContext): strin
     for (const attribute of [...element.attributes]) {
       const name = attribute.name.toLowerCase();
       if (name.startsWith("on")) element.removeAttribute(attribute.name);
-      if ((name === "href" || name === "src") && !isSafeUrl(attribute.value)) element.removeAttribute(attribute.name);
+      if (name === "href" && isSessionLinkPath(attribute.value)) {
+        element.setAttribute("href", resolveAppUrl(attribute.value));
+      } else if ((name === "href" || name === "src") && !isSafeUrl(attribute.value)) {
+        element.removeAttribute(attribute.name);
+      }
     }
     if (element.tagName === "A") {
       element.setAttribute("target", element.hasAttribute("data-workspace-file") ? "_self" : "_blank");
@@ -75,6 +80,14 @@ function wrapTablesInScrollRegions(root: DocumentFragment): void {
     table.before(wrapper);
     wrapper.append(table);
   });
+}
+
+function isSessionLinkPath(path: string): boolean {
+  if (!path.startsWith("?")) return false;
+  const query = new URLSearchParams(path.slice(1));
+  return (query.get("session") ?? "") !== "" && (query.get("cwd") ?? "") !== ""
+    && query.get("view") === "chat"
+    && [...query.keys()].every((key) => key === "session" || key === "cwd" || key === "view");
 }
 
 function isSafeUrl(url: string): boolean {

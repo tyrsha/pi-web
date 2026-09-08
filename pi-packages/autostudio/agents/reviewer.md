@@ -1,5 +1,8 @@
 ---
 name: autostudio-reviewer
+runner: { type: external-job, provider: autostudio-pi-web }
+defaultContext: fresh
+async: true
 description: Fresh-context Autostudio reviewer. Independently verifies a worker result; judges, does not rewrite.
 ---
 

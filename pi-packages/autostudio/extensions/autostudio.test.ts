@@ -23,7 +23,7 @@ function harness() {
   const notify = vi.fn();
   // Narrow command harness: only fields consumed by the extension are supplied.
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  const ctx = { cwd, ui: { notify }, sessionManager: { getBranch: () => [{ type: "message", message: { role: "user", content: "Keep the existing Aria queue fed; upload to Immich." } }] } } as unknown as ExtensionCommandContext;
+  const ctx = { cwd, ui: { notify }, sessionManager: { getSessionId: () => "parent-session", getBranch: () => [{ type: "message", message: { role: "user", content: "Keep the existing Aria queue fed; upload to Immich." } }] } } as unknown as ExtensionCommandContext;
   return { cwd, handler, ctx, sendMessage, notify };
 }
 

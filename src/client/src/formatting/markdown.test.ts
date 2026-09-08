@@ -21,6 +21,7 @@ function link(text: string, context?: MarkdownWorkspaceContext): HTMLAnchorEleme
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  document.head.querySelectorAll("base").forEach((element) => { element.remove(); });
   document.body.replaceChildren();
   window.history.replaceState(null, "", "/");
 });
@@ -127,5 +128,29 @@ describe("workspace Markdown downloads", () => {
     expect(markdownWorkspaceContext("remote", undefined, { id: "s", cwd: "/srv/work" })).toBeUndefined();
     expect(markdownWorkspaceContext("remote", selected, { id: "s", cwd: "/different" })).toBeUndefined();
     expect(markdownWorkspaceContext("remote", selected, { id: "s", cwd: "/srv/work" })).toEqual({ machineId: "remote", projectId: "p", workspaceId: "w", root: "/srv/work/" });
+  });
+});
+
+describe("chat worker session links", () => {
+  it("resolves only session deep links under a nested deployment", () => {
+    vi.stubEnv("BASE_URL", "/nested/pi/");
+    const base = document.createElement("base");
+    base.href = "https://example.test/nested/pi/";
+    document.head.append(base);
+    const anchor = link("[Open session](<?session=child%26id&cwd=%2Fwork%2Fspace+name&view=chat>)");
+    expect(anchor.getAttribute("href")).toBe("https://example.test/nested/pi/?session=child%26id&cwd=%2Fwork%2Fspace+name&view=chat");
+    expect(anchor.target).toBe("_blank");
+    expect(anchor.rel).toContain("noopener");
+    expect(link("[query](?redirect=evil)").hasAttribute("href")).toBe(false);
+    expect(link("[script](javascript:alert%281%29)").hasAttribute("href")).toBe(false);
+    expect(render("![image](?session=x&cwd=y&view=chat)").querySelector("img")?.hasAttribute("src")).toBe(false);
+  });
+
+  it("does not cache an app-relative session link across deployment prefixes", () => {
+    const text = "[worker](?session=x&cwd=y&view=chat)";
+    vi.stubEnv("BASE_URL", "/first/");
+    expect(link(text).href).toContain("/first/?session=x");
+    vi.stubEnv("BASE_URL", "/second/");
+    expect(link(text).href).toContain("/second/?session=x");
   });
 });
