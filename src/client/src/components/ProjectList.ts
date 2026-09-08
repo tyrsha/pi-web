@@ -111,7 +111,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
         <button
           class="section-toggle"
           aria-expanded=${String(!collapsed)}
-          .draggable=${this.extension?.onMoveGroup !== undefined}
+          .draggable=${false}
           @dragstart=${(event: DragEvent) => { this.handleGroupDragStart(event, group); }}
           @dragover=${(event: DragEvent) => { this.handleGroupDragOver(event, group); }}
           @drop=${(event: DragEvent) => { this.handleGroupDrop(event, group); }}
@@ -122,6 +122,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
           @pointerup=${(event: PointerEvent) => { this.handlePointerUp(event); }}
           @pointercancel=${(event: PointerEvent) => { this.handlePointerCancel(event); }}
         >
+          ${this.extension?.onMoveGroup !== undefined ? this.renderDragHandle(`Drag group ${group}`) : null}
           <span class="section-title">
             <span class="section-name">${collapsed ? "▸" : "▾"} ${group}</span>
             ${collapsed && selectedProject !== undefined ? html`<small class="section-selected" title=${selectedProject.path}>${selectedProject.name}</small>` : null}
@@ -164,7 +165,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
         data-project-id=${project.id}
         tabindex="0"
         title=${project.path}
-        .draggable=${draggable}
+        .draggable=${false}
         @dragstart=${(event: DragEvent) => { this.handleDragStart(event, project); }}
         @dragover=${(event: DragEvent) => { this.handleProjectDragOver(event, project); }}
         @drop=${(event: DragEvent) => { this.handleProjectDrop(event, project); }}
@@ -176,7 +177,8 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
         @click=${(event: MouseEvent) => { this.handleProjectClick(event, project); }}
         @keydown=${(event: KeyboardEvent) => { this.handleProjectKeydown(event, project); }}
       >
-        <div class="action-main">
+        <div class=${`action-main ${draggable ? "has-drag-handle" : ""}`}>
+          ${draggable ? this.renderDragHandle(`Drag project ${project.name}`) : null}
           <span class="workspace-primary"><span class="workspace-primary-label">${project.name}</span></span><small>${project.path}</small>
           ${this.renderActivity(project)}
         </div>
@@ -192,6 +194,21 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
       </div>
         ${this.projectDropIndicator(project, "after")}
     `;
+  }
+
+  private renderDragHandle(label: string) {
+    return html`<span
+      class="drag-handle"
+      role="img"
+      aria-label=${label}
+      title=${label}
+      .draggable=${true}
+      @click=${(event: MouseEvent) => { event.stopPropagation(); }}
+    >⠿</span>`;
+  }
+
+  private isDragHandleEvent(event: Event): boolean {
+    return event.target instanceof Element && event.target.closest(".drag-handle") !== null;
   }
 
   private projectDropIndicator(project: Project, position: "before" | "after") {
@@ -226,12 +243,12 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
     // starting a pending custom drag) suppresses the native dragstart, so
     // only touch/pen go through the long-press fallback.
     if (event.pointerType !== "touch" && event.pointerType !== "pen") return;
-    if (event.target instanceof Element && event.target.closest("button, select") !== null) return;
+    if (!this.isDragHandleEvent(event)) return;
     this.beginPointerDrag(event, { kind: "project", projectId: project.id });
   }
 
   private handleGroupPointerDown(event: PointerEvent, group: string): void {
-    if (this.extension?.onMoveGroup === undefined) return;
+    if (this.extension?.onMoveGroup === undefined || !this.isDragHandleEvent(event)) return;
     if (event.pointerType !== "touch" && event.pointerType !== "pen") return;
     this.beginPointerDrag(event, { kind: "group", group });
   }
@@ -297,6 +314,8 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
   }
 
   private handlePointerCancel(event: PointerEvent): void {
+    // Native mouse dragstart also emits pointercancel; only cancel a custom drag.
+    if (this.pointerDrag === undefined) return;
     if (event.currentTarget instanceof HTMLElement && event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     this.cancelPointerDrag();
   }
@@ -428,7 +447,10 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
   }
 
   private handleDragStart(event: DragEvent, project: Project): void {
-    if (this.extension?.onMoveProject === undefined) return;
+    if (this.extension?.onMoveProject === undefined || !this.isDragHandleEvent(event)) {
+      event.preventDefault();
+      return;
+    }
     this.cancelPendingPointerDrag();
     this.draggedProjectId = project.id;
     this.nativeDragActive = true;
@@ -437,7 +459,10 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
   }
 
   private handleGroupDragStart(event: DragEvent, group: string): void {
-    if (this.extension?.onMoveGroup === undefined) return;
+    if (this.extension?.onMoveGroup === undefined || !this.isDragHandleEvent(event)) {
+      event.preventDefault();
+      return;
+    }
     this.cancelPendingPointerDrag();
     this.draggedGroup = group;
     this.nativeDragActive = true;
@@ -709,9 +734,12 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
     .project-drop-placeholder { cursor: default; pointer-events: none; }
     .project-drop-placeholder .action-main, .project-drop-placeholder .action-menu-toggle { border-color: var(--pi-border); background: var(--pi-surface); }
     .project-drop-placeholder .action-main { color: var(--pi-muted); outline: 2px dashed var(--pi-accent); outline-offset: -2px; }
-    .action-row[draggable="true"] { cursor: grab; user-select: none; -webkit-user-select: none; }
-    .action-row[draggable="true"]:active, .action-row.dragging { cursor: grabbing; touch-action: none; }
-    .project-group > .section-toggle[draggable="true"] { cursor: grab; user-select: none; -webkit-user-select: none; touch-action: none; }
+    .drag-handle { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 24px; width: 24px; min-height: 24px; color: var(--pi-muted); font-size: 18px; line-height: 1; cursor: grab; user-select: none; -webkit-user-select: none; touch-action: none; }
+    .drag-handle:hover { color: var(--pi-text); }
+    .drag-handle:active { cursor: grabbing; }
+    .action-main.has-drag-handle { padding-left: 32px; }
+    .action-main > .drag-handle { position: absolute; left: 0; top: 0; bottom: 0; }
+    .project-group > .section-toggle > .section-title { flex: 1 1 auto; }
   `];
 }
 

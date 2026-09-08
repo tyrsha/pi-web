@@ -10,6 +10,8 @@ import { ProjectList } from "./ProjectList";
 
 afterEach(() => {
   document.body.replaceChildren();
+  localStorage.clear();
+  vi.useRealTimers();
 });
 
 describe("project-list action-menu extensions", () => {
@@ -48,6 +50,79 @@ describe("project-list action-menu extensions", () => {
     expect(list.shadowRoot?.querySelector(".action-menu-panel")).toBeNull();
   });
 
+  it("only exposes draggable handles and keeps body clicks for selection and collapsing", async () => {
+    const list = new ProjectList();
+    const select = vi.fn();
+    list.projects = [project("game")];
+    list.onSelect = select;
+    list.extension = {
+      id: "organizer", group: () => "Game",
+      onMoveProject: () => undefined, onMoveGroup: () => undefined,
+    };
+    document.body.append(list);
+    await list.updateComplete;
+    const row = list.shadowRoot?.querySelector<HTMLElement>(".action-row");
+    const heading = list.shadowRoot?.querySelector<HTMLButtonElement>(".project-group > .section-toggle");
+    if (!row || !heading) throw new Error("Expected project and group");
+    expect([...(list.shadowRoot?.querySelectorAll<HTMLElement>("*") ?? [])].filter((element) => element.draggable))
+      .toEqual([dragHandle(heading), dragHandle(row)]);
+
+    const setData = vi.fn();
+    for (const target of [row, row.querySelector(".workspace-primary-label"), row.querySelector(".action-menu-toggle"), heading, heading.querySelector(".section-name")]) {
+      if (target === null) throw new Error("Expected non-handle drag target");
+      const start = new Event("dragstart", { bubbles: true, cancelable: true });
+      Object.defineProperty(start, "dataTransfer", { value: { setData } });
+      target.dispatchEvent(start);
+      expect(start.defaultPrevented).toBe(true);
+    }
+    expect(setData).not.toHaveBeenCalled();
+    dragHandle(row).click();
+    dragHandle(heading).click();
+    await list.updateComplete;
+    expect(select).not.toHaveBeenCalled();
+    expect(heading.getAttribute("aria-expanded")).toBe("true");
+    row.querySelector<HTMLElement>(".workspace-primary-label")?.click();
+    expect(select).toHaveBeenCalledWith(project("game"));
+    heading.click();
+    await list.updateComplete;
+    expect(heading.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it.each(["touch", "pen"])("only starts %s long-press drags from project and group handles", async (pointerType) => {
+    vi.useFakeTimers();
+    const list = new ProjectList();
+    list.projects = [project("game")];
+    list.extension = {
+      id: "organizer", group: () => "Game",
+      onMoveProject: () => undefined, onMoveGroup: () => undefined,
+    };
+    document.body.append(list);
+    await list.updateComplete;
+    const owners = list.shadowRoot?.querySelectorAll<HTMLElement>(".action-row, .project-group > .section-toggle");
+    if (owners === undefined) throw new Error("Expected drag owners");
+    for (const owner of owners) {
+      const down = () => new PointerEvent("pointerdown", { bubbles: true, pointerType, pointerId: 7 });
+      owner.dispatchEvent(down());
+      vi.advanceTimersByTime(300);
+      expect(Reflect.get(list, "pointerDrag")).toBeUndefined();
+      dragHandle(owner).dispatchEvent(down());
+      vi.advanceTimersByTime(300);
+      expect(Reflect.get(list, "pointerDrag")).toMatchObject({ active: true });
+      owner.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 7 }));
+      expect(Reflect.get(list, "pointerDrag")).toBeUndefined();
+    }
+  });
+
+  it("does not render handles when the extension does not support moving", async () => {
+    const list = new ProjectList();
+    list.projects = [project("game")];
+    list.extension = { id: "organizer", group: () => "Game" };
+    document.body.append(list);
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".drag-handle")).toBeNull();
+    expect([...(list.shadowRoot?.querySelectorAll<HTMLElement>("*") ?? [])].filter((element) => element.draggable)).toHaveLength(0);
+  });
+
   it("delegates drag-and-drop to the extension for group drops", async () => {
     const moves: unknown[] = [];
     const list = new ProjectList();
@@ -62,7 +137,7 @@ describe("project-list action-menu extensions", () => {
 
     const dragStart = new Event("dragstart", { bubbles: true });
     Object.defineProperty(dragStart, "dataTransfer", { value: { setData: vi.fn(), effectAllowed: "" } });
-    list.shadowRoot?.querySelector<HTMLElement>(".action-row[title=\"/repo/ungrouped\"]")?.dispatchEvent(dragStart);
+    list.shadowRoot?.querySelector<HTMLElement>(".action-row[title=\"/repo/ungrouped\"] .drag-handle")?.dispatchEvent(dragStart);
     list.shadowRoot?.querySelector<HTMLElement>(".project-group")?.dispatchEvent(new Event("drop", { bubbles: true, cancelable: true }));
 
     expect(moves).toHaveLength(1);
@@ -84,7 +159,7 @@ describe("project-list action-menu extensions", () => {
     const dataTransfer = { setData: vi.fn(), getData: () => "project-a", effectAllowed: "", dropEffect: "" };
     const dragStart = new Event("dragstart", { bubbles: true });
     Object.defineProperty(dragStart, "dataTransfer", { value: dataTransfer });
-    sourceRow.dispatchEvent(dragStart);
+    dragHandle(sourceRow).dispatchEvent(dragStart);
     const dragOver = new Event("dragover", { bubbles: true, cancelable: true });
     Object.defineProperties(dragOver, { dataTransfer: { value: dataTransfer }, clientY: { value: -1 } });
     targetRow.dispatchEvent(dragOver);
@@ -109,7 +184,7 @@ describe("project-list action-menu extensions", () => {
     const dataTransfer = { setData: vi.fn(), getData: () => "project-a", effectAllowed: "", dropEffect: "" };
     const dragStart = new Event("dragstart", { bubbles: true });
     Object.defineProperty(dragStart, "dataTransfer", { value: dataTransfer });
-    sourceRow.dispatchEvent(dragStart);
+    dragHandle(sourceRow).dispatchEvent(dragStart);
     const dragOver = new Event("dragover", { bubbles: true, cancelable: true });
     Object.defineProperties(dragOver, { dataTransfer: { value: dataTransfer }, clientY: { value: -1 } });
     targetRow.dispatchEvent(dragOver);
@@ -142,7 +217,7 @@ describe("project-list action-menu extensions", () => {
     const dataTransfer = { setData: vi.fn(), getData: () => "game-c", effectAllowed: "", dropEffect: "" };
     const dragStart = new Event("dragstart", { bubbles: true });
     Object.defineProperty(dragStart, "dataTransfer", { value: dataTransfer });
-    rowFor("game-c").dispatchEvent(dragStart);
+    dragHandle(rowFor("game-c")).dispatchEvent(dragStart);
     const dragOverTop = new Event("dragover", { bubbles: true, cancelable: true });
     Object.defineProperties(dragOverTop, { dataTransfer: { value: dataTransfer }, clientY: { value: -1 } });
     rowFor("game-a").dispatchEvent(dragOverTop);
@@ -204,7 +279,7 @@ describe("project-list action-menu extensions", () => {
     const dataTransfer = { setData: vi.fn(), getData: () => "game-c", effectAllowed: "", dropEffect: "" };
     const dragStart = new Event("dragstart", { bubbles: true });
     Object.defineProperty(dragStart, "dataTransfer", { value: dataTransfer });
-    rowFor("game-c").dispatchEvent(dragStart);
+    dragHandle(rowFor("game-c")).dispatchEvent(dragStart);
     const dragOverTop = new Event("dragover", { bubbles: true, cancelable: true });
     Object.defineProperties(dragOverTop, { dataTransfer: { value: dataTransfer }, clientX: { value: 150 }, clientY: { value: 10 } });
     rowFor("game-a").dispatchEvent(dragOverTop);
@@ -240,20 +315,22 @@ describe("project-list action-menu extensions", () => {
     if (sourceRow === undefined || targetRow === undefined) throw new Error("Expected two project rows");
     const pointerDown = new Event("pointerdown", { bubbles: true, cancelable: true });
     Object.defineProperties(pointerDown, { pointerType: { value: "mouse" }, pointerId: { value: 1 }, clientX: { value: 10 }, clientY: { value: 10 } });
-    sourceRow.dispatchEvent(pointerDown);
+    dragHandle(sourceRow).dispatchEvent(pointerDown);
     expect(Reflect.get(list, "pointerDrag")).toBeUndefined();
 
     const dataTransfer = { setData: vi.fn(), getData: () => "project-a", effectAllowed: "", dropEffect: "" };
     const dragStart = new Event("dragstart", { bubbles: true });
     Object.defineProperty(dragStart, "dataTransfer", { value: dataTransfer });
-    sourceRow.dispatchEvent(dragStart);
+    dragHandle(sourceRow).dispatchEvent(dragStart);
+    // Browsers cancel the pointer stream when native dragging takes over.
+    dragHandle(sourceRow).dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 1, pointerType: "mouse" }));
     targetRow.dispatchEvent(new Event("drop", { bubbles: true, cancelable: true }));
     expect(moves).toHaveLength(1);
 
     // A second drop without an intervening dragend must still work.
     const dragStart2 = new Event("dragstart", { bubbles: true });
     Object.defineProperty(dragStart2, "dataTransfer", { value: dataTransfer });
-    targetRow.dispatchEvent(dragStart2);
+    dragHandle(targetRow).dispatchEvent(dragStart2);
     sourceRow.dispatchEvent(new Event("drop", { bubbles: true, cancelable: true }));
     expect(moves).toHaveLength(2);
   });
@@ -269,7 +346,7 @@ describe("project-list action-menu extensions", () => {
     if (sourceRow === undefined || sourceRow === null) throw new Error("Expected a project row");
     const pointerDown = new Event("pointerdown", { bubbles: true, cancelable: true });
     Object.defineProperties(pointerDown, { pointerType: { value: "touch" }, pointerId: { value: 7 }, clientX: { value: 10 }, clientY: { value: 10 } });
-    sourceRow.dispatchEvent(pointerDown);
+    dragHandle(sourceRow).dispatchEvent(pointerDown);
     expect(Reflect.get(list, "pointerDrag")).not.toBeUndefined();
 
     const pointerCancel = new Event("pointercancel", { bubbles: true, cancelable: true });
@@ -291,11 +368,12 @@ describe("project-list action-menu extensions", () => {
     const sourceRow = rows[0];
     const targetRow = rows[1];
     if (sourceRow === undefined || targetRow === undefined) throw new Error("Expected two project rows");
-    expect(sourceRow.draggable).toBe(true);
+    expect(sourceRow.draggable).toBe(false);
+    expect(dragHandle(sourceRow).draggable).toBe(true);
     const dataTransfer = { setData: vi.fn(), getData: () => "project-a", effectAllowed: "", dropEffect: "" };
     const dragStart = new Event("dragstart", { bubbles: true });
     Object.defineProperty(dragStart, "dataTransfer", { value: dataTransfer });
-    sourceRow.dispatchEvent(dragStart);
+    dragHandle(sourceRow).dispatchEvent(dragStart);
     const dragOver = new Event("dragover", { bubbles: true, cancelable: true });
     Object.defineProperties(dragOver, { dataTransfer: { value: dataTransfer }, clientY: { value: 0 } });
     targetRow.dispatchEvent(dragOver);
@@ -326,11 +404,13 @@ describe("project-list action-menu extensions", () => {
     const sourceHeading = headings[0];
     const targetHeading = headings[1];
     if (sourceHeading === undefined || targetHeading === undefined) throw new Error("Expected two group headings");
-    expect(sourceHeading.draggable).toBe(true);
+    expect(sourceHeading.draggable).toBe(false);
+    expect(dragHandle(sourceHeading).draggable).toBe(true);
     const dataTransfer = { setData: vi.fn(), getData: () => "Game", effectAllowed: "", dropEffect: "" };
     const dragStart = new Event("dragstart", { bubbles: true });
     Object.defineProperty(dragStart, "dataTransfer", { value: dataTransfer });
-    sourceHeading.dispatchEvent(dragStart);
+    dragHandle(sourceHeading).dispatchEvent(dragStart);
+    dragHandle(sourceHeading).dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 1, pointerType: "mouse" }));
     const dragOver = new Event("dragover", { bubbles: true, cancelable: true });
     Object.defineProperties(dragOver, { dataTransfer: { value: dataTransfer }, clientY: { value: -1 } });
     targetHeading.dispatchEvent(dragOver);
@@ -448,6 +528,12 @@ function rowFor(list: ProjectList, projectName: string): Element {
 
 function unreadDot(row: Element): Element | null {
   return row.querySelector(".activity-indicator.unread");
+}
+
+function dragHandle(owner: Element): HTMLElement {
+  const handle = owner.querySelector<HTMLElement>(".drag-handle");
+  if (handle === null) throw new Error("Expected a drag handle");
+  return handle;
 }
 
 function project(id: string): Project {
