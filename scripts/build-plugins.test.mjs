@@ -15,6 +15,20 @@ afterEach(async () => {
 });
 
 describe("buildDirectory", () => {
+  it("points packaged Pi extensions at emitted JS without rewriting dependency entries", async () => {
+    const source = join(tempDir, "source");
+    const target = join(tempDir, "out");
+    await mkdir(join(source, "extensions"), { recursive: true });
+    await writeFile(join(source, "extensions", "directWorkers.ts"), "export default async function () {}\n");
+    const extensions = ["./extensions/directWorkers.ts", "./node_modules/pi-subagents/index.ts", "./extensions", "../shared/outside.ts"];
+    await writeFile(join(source, "package.json"), JSON.stringify({ pi: { extensions } }));
+    await buildDirectory(source, target);
+    const built = JSON.parse(await readFile(join(target, "package.json"), "utf8"));
+    expect(built.pi.extensions).toEqual(["./extensions/directWorkers.js", ...extensions.slice(1)]);
+    expect((await lstat(join(target, built.pi.extensions[0]))).isFile()).toBe(true);
+    expect(JSON.parse(await readFile(join(source, "package.json"), "utf8")).pi.extensions).toEqual(extensions);
+  });
+
   it("materializes a symlinked file as a real file", async () => {
     const source = join(tempDir, "source");
     await mkdir(source, { recursive: true });

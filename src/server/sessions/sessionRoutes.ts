@@ -56,6 +56,27 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
     }
   });
 
+  app.post<{ Params: { sessionId: string }; Body: Record<string, unknown> | undefined }>(`${prefix}/sessions/:sessionId/subsessions`, async (request, reply) => {
+    try {
+      const body = requireRecord(request.body);
+      // Parent file/provenance and the actual worker cwd are resolved by the
+      // service, never accepted from a caller-controlled session header.
+      const unknown = Object.keys(body).find((key) => !["cwd", "prompt", "name", "model"].includes(key));
+      if (unknown !== undefined) throw new Error(`Unsupported subsession field: ${unknown}`);
+      const prompt = requireNonEmptyString(body, "prompt");
+      const name = body["name"] === undefined ? undefined : requireNonEmptyString(body, "name").trim();
+      const model = body["model"] === undefined ? undefined : requireNonEmptyString(body, "model").trim();
+      if (name !== undefined && (name.length > 200 || /[\r\n]/u.test(name))) throw new Error("Subsession name must be one line of at most 200 characters");
+      return await sessions.startSubsession(sessionRefFromBody(request.params.sessionId, body), {
+        prompt,
+        ...(name === undefined ? {} : { name }),
+        ...(model === undefined ? {} : { model }),
+      });
+    } catch (error) {
+      return reply.code(mutationErrorStatus(error)).send({ error: errorMessage(error) });
+    }
+  });
+
   app.get(`${prefix}/sessions/notifications`, async (_request, reply) => {
     try {
       return await sessions.notificationCatalog();

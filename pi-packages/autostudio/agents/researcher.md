@@ -1,5 +1,8 @@
 ---
 name: autostudio-researcher
+runner: { type: external-job, provider: autostudio-pi-web }
+defaultContext: fresh
+async: true
 description: Fresh-context Autostudio researcher. Investigates options or code and returns evidence, never implementation.
 ---
 

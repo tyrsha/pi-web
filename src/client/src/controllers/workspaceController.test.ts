@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppState } from "../appState";
 import { initialAppState } from "../appState";
+import { browserErrorContext, visibleBrowserErrors } from "../browserErrors";
 import type { Machine, MessagePage, Project, SessionInfo, SessionRef, Workspace } from "../api";
 import type { SessionController } from "./sessionController";
 import { TOPOLOGY_REFRESH_TIMEOUT_MS, WorkspaceController } from "./workspaceController";
@@ -276,7 +277,9 @@ describe("WorkspaceController.refreshSelectedProjectTopology", () => {
 
       expect(loadWorkspaces).toHaveBeenCalledTimes(1);
       expect(test.state().isLoadingWorkspaces).toBe(false);
-      expect(test.state().error).toContain("timed out");
+      const [error] = visibleBrowserErrors(test.state().browserErrors, browserErrorContext(test.state()));
+      expect(error?.scope).toEqual({ kind: "project", machineId: "local", projectId: repo.id });
+      expect(error?.message).toContain("timed out");
 
       await test.controller.selectProject(repo);
       expect(loadWorkspaces).toHaveBeenCalledTimes(2);

@@ -38,6 +38,19 @@ import type { NormalizedSessionCleanupRequest } from "./sessionCleanup.js";
 
 export type SessionRouteRef = ClientSessionRef;
 
+export interface StartSubsessionRequest {
+  prompt: string;
+  name?: string;
+  model?: string;
+}
+
+export interface StartSubsessionResult {
+  sessionId: string;
+  parentSessionId: string;
+  cwd: string;
+  model?: string;
+}
+
 /**
  * Route-facing session contract for PI WEB's HTTP/WebSocket API.
  *
@@ -53,6 +66,8 @@ export interface SessionRouteService {
    * echoes it and never interprets it.
    */
   start(cwd: string, options?: { startupToken?: string }): Promise<ClientSession>;
+  /** Start a tracked child using the resolved parent's identity, workspace and defaults. */
+  startSubsession(parent: SessionRouteRef, request: StartSubsessionRequest): Promise<StartSubsessionResult>;
   messages(ref: SessionRouteRef, page?: { before?: number; limit?: number }): Promise<ClientMessagePage>;
   status(ref: SessionRouteRef): Promise<ClientSessionStatus>;
   streamSnapshot(ref: SessionRouteRef): Promise<SessionStreamSnapshot>;

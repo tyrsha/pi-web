@@ -1,4 +1,5 @@
 import { marked } from "marked";
+import { resolveAppUrl } from "../appUrl";
 
 const renderer = new marked.Renderer();
 renderer.html = ({ text }) => escapeHtml(text);
@@ -7,11 +8,12 @@ const MAX_MARKDOWN_CACHE_ENTRIES = 300;
 const markdownHtmlCache = new Map<string, string>();
 
 export function toSafeMarkdownHtml(text: string): string {
-  const cached = markdownHtmlCache.get(text);
+  const cacheKey = `${resolveAppUrl("")}\n${text}`;
+  const cached = markdownHtmlCache.get(cacheKey);
   if (cached !== undefined) return cached;
   const html = marked.parse(text, { async: false, breaks: true, gfm: true, renderer });
   const safeHtml = sanitizeHtml(html);
-  markdownHtmlCache.set(text, safeHtml);
+  markdownHtmlCache.set(cacheKey, safeHtml);
   if (markdownHtmlCache.size > MAX_MARKDOWN_CACHE_ENTRIES) {
     const oldest = markdownHtmlCache.keys().next().value;
     if (oldest !== undefined) markdownHtmlCache.delete(oldest);
@@ -36,7 +38,11 @@ function sanitizeHtml(html: string): string {
     for (const attribute of [...element.attributes]) {
       const name = attribute.name.toLowerCase();
       if (name.startsWith("on")) element.removeAttribute(attribute.name);
-      if ((name === "href" || name === "src") && !isSafeUrl(attribute.value)) element.removeAttribute(attribute.name);
+      if (name === "href" && isSessionLinkPath(attribute.value)) {
+        element.setAttribute("href", resolveAppUrl(attribute.value));
+      } else if ((name === "href" || name === "src") && !isSafeUrl(attribute.value)) {
+        element.removeAttribute(attribute.name);
+      }
     }
     if (element.tagName === "A") {
       element.setAttribute("target", "_blank");
@@ -60,6 +66,14 @@ function wrapTablesInScrollRegions(root: DocumentFragment): void {
     table.before(wrapper);
     wrapper.append(table);
   });
+}
+
+function isSessionLinkPath(path: string): boolean {
+  if (!path.startsWith("?")) return false;
+  const query = new URLSearchParams(path.slice(1));
+  return (query.get("session") ?? "") !== "" && (query.get("cwd") ?? "") !== ""
+    && query.get("view") === "chat"
+    && [...query.keys()].every((key) => key === "session" || key === "cwd" || key === "view");
 }
 
 function isSafeUrl(url: string): boolean {

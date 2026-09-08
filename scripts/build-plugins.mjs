@@ -79,11 +79,29 @@ export async function buildDirectory(sourceDir, targetDir, visited = new Set()) 
 
     if (entry.name.endsWith(".js") && await hasTypeScriptSource(sourcePath)) continue;
     await mkdir(dirname(targetPath), { recursive: true });
-    await copyFile(sourcePath, targetPath);
+    if (entry.name === "package.json") {
+      await writeFile(targetPath, await builtPackageManifest(sourcePath));
+    } else {
+      await copyFile(sourcePath, targetPath);
+    }
     copied += 1;
   }
 
   return { copied, transpiled };
+}
+
+async function builtPackageManifest(file) {
+  const source = await readFile(file, "utf8");
+  const manifest = JSON.parse(source);
+  if (!Array.isArray(manifest?.pi?.extensions)) return source;
+  // Rewrite only this package's transpiled entries. Dependencies retain their
+  // published source format and are installed separately (node_modules is skipped).
+  manifest.pi.extensions = manifest.pi.extensions.map((entry) => {
+    if (typeof entry !== "string" || !entry.startsWith("./") || !entry.endsWith(".ts")) return entry;
+    if (entry.split("/").some((part) => part === ".." || part === "node_modules")) return entry;
+    return entry.replace(/\.ts$/u, ".js");
+  });
+  return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
 async function buildFile(file, outputPath) {

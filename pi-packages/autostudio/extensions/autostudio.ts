@@ -355,7 +355,7 @@ export default function (pi: Pick<ExtensionAPI, "on" | "events" | "registerComma
         if (activeDelegation !== undefined) throw new Error("Autostudio is already running in this session.");
         const socket = process.env["PI_WEB_SESSIOND_SOCKET"];
         if (socket === undefined || socket === "") throw new Error("Autostudio requires Pi Web's session daemon to create visible worker sessions.");
-        const host = createSessionHost(daemonRequest(socket), cwd, ctx.model);
+        const host = createSessionHost(daemonRequest(socket), cwd, ctx.sessionManager.getSessionId(), ctx.model);
         const delegation = await createDelegation(pi, ctx, host, {
           worker: WORKER_SYSTEM_PROMPT, reviewer: REVIEWER_SYSTEM_PROMPT,
           researcher: RESEARCHER_SYSTEM_PROMPT, planner: PLANNER_SYSTEM_PROMPT,

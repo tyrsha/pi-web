@@ -1,4 +1,5 @@
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -19,6 +20,18 @@ const forbiddenPatterns = [
 ];
 
 describe("PI WEB plugin packages", () => {
+  it("scans package-owned sources without treating installed dependencies as plugins", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-public-api-"));
+    try {
+      await mkdir(join(root, "node_modules", "dependency"), { recursive: true });
+      await writeFile(join(root, "owned.ts"), "export const owned = true;\n");
+      await writeFile(join(root, "node_modules", "dependency", "index.ts"), "import { spawn } from 'node:child_process';\n");
+      expect(await pluginSourceFiles(root)).toEqual([join(root, "owned.ts")]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("uses public browser and server plugin APIs instead of direct PI WEB internals", async () => {
     const violations: string[] = [];
     for (const root of pluginRoots) {
@@ -78,6 +91,7 @@ function moduleSpecifiers(source: string): string[] {
 async function pluginSourceFiles(root: string): Promise<string[]> {
   const files: string[] = [];
   for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (entry.name === "node_modules") continue;
     const path = join(root, entry.name);
     if (entry.isDirectory()) files.push(...await pluginSourceFiles(path));
     else if (entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) files.push(path);

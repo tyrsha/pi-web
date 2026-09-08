@@ -50,19 +50,23 @@ function assistantText(message: Record<string, unknown>): string {
   }).join("\n");
 }
 
-export function createSessionHost(request: DaemonRequest, cwd: string, model?: { provider: string; id: string }) {
+export function createSessionHost(request: DaemonRequest, cwd: string, parentSessionId: string, model?: { provider: string; id: string }) {
+  if (parentSessionId === "") throw new Error("Autostudio requires a parent session id");
   const base = (id: string) => `/sessions/${encodeURIComponent(id)}`;
   const query = new URLSearchParams({ cwd }).toString();
   return {
     async start(input: { prompt: string; cwd: string; name: string }): Promise<{ id: string; url: string }> {
       if (input.cwd !== cwd) throw new Error("Worker workspace differs from the manager session");
-      const created = record(await request("POST", "/sessions", { cwd }));
-      const id = created["id"];
-      if (typeof id !== "string" || id === "") throw new Error("Pi Web did not return a worker session id");
-      // Name before prompting so automatic title generation cannot hide the role.
-      await request("POST", `${base(id)}/commands/run`, { cwd, text: `/name ${input.name.replace(/[\r\n]/g, " ")}` });
-      if (model !== undefined) await request("POST", `${base(id)}/model`, { cwd, provider: model.provider, modelId: model.id });
-      await request("POST", `${base(id)}/prompt`, { cwd, text: input.prompt });
+      // One daemon-owned operation creates the parent link, names the child and
+      // starts it. Never fall back to an independent POST /sessions on old hosts.
+      const created = record(await request("POST", `${base(parentSessionId)}/subsessions`, {
+        cwd, prompt: input.prompt, name: input.name,
+        ...(model === undefined ? {} : { model: `${model.provider}/${model.id}` }),
+      }));
+      const id = created["sessionId"];
+      if (typeof id !== "string" || id === "" || created["parentSessionId"] !== parentSessionId || created["cwd"] !== cwd) {
+        throw new Error("Pi Web did not return a tracked worker for this parent and workspace");
+      }
       return { id, url: workerSessionPath(id, cwd) };
     },
     async status(id: string): Promise<{ state: "running" | "completed" | "failed" | "stopped"; output?: string }> {

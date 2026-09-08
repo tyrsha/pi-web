@@ -24,7 +24,7 @@ describe("interactive shell arguments", () => {
   });
 });
 
-// TerminalService spawns a POSIX shell (/bin/bash with -lc and commands like
+// TerminalService spawns a POSIX shell (Bash with -lc and commands like
 // printf/true/exit). The terminal feature is not supported on native Windows,
 // so these tests are skipped there rather than asserting Unix shell behavior.
 describe.skipIf(process.platform === "win32")("TerminalService command runs", () => {
@@ -332,7 +332,9 @@ async function withBashLoginProfile(run: () => Promise<void>): Promise<void> {
   const originalHome = process.env["HOME"];
   const originalShell = process.env["SHELL"];
   process.env["HOME"] = home;
-  process.env["SHELL"] = "/bin/bash";
+  // Resolve through PATH, as the service supports: Bash is not /bin/bash on
+  // NixOS and other non-FHS hosts running this integration test.
+  process.env["SHELL"] = "bash";
   try {
     await run();
   } finally {

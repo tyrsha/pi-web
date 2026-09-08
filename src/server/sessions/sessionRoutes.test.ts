@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ASK_USER_ID_MAX_LENGTH, ASK_USER_OTHER_TEXT_MAX_LENGTH, ASK_USER_QUESTION_LIMIT, EXTENSION_DIALOG_ID_MAX_LENGTH, EXTENSION_DIALOG_INPUT_MAX_LENGTH, SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../shared/apiTypes.js";
 import type {
   AskUserCloseResponse,
@@ -59,6 +59,41 @@ afterEach(async () => {
 });
 
 describe("session routes", () => {
+  it("creates a tracked child through the parent-scoped endpoint", async () => {
+    const start = vi.spyOn(service, "startSubsession").mockResolvedValue({ sessionId: "child", parentSessionId: "parent", cwd: resolve("/repo") });
+    const response = await app.inject({ method: "POST", url: "/sessions/parent/subsessions", payload: {
+      cwd: resolve("/repo"), prompt: "Verify the task", name: "Autostudio worker", model: "openai-codex/gpt-5.6-luna",
+    } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ sessionId: "child", parentSessionId: "parent", cwd: resolve("/repo") });
+    expect(start).toHaveBeenCalledWith({ id: "parent", cwd: resolve("/repo") }, {
+      prompt: "Verify the task", name: "Autostudio worker", model: "openai-codex/gpt-5.6-luna",
+    });
+  });
+
+  it.each([
+    {}, { cwd: "/repo" }, { cwd: "/repo", prompt: " " },
+    { cwd: "relative", prompt: "task" },
+    { cwd: "/repo", prompt: "task", name: "a\nb" },
+    { cwd: "/repo", prompt: "task", name: "a".repeat(201) },
+    { cwd: "/repo", prompt: "task", model: 3 },
+    { cwd: "/repo", prompt: "task", parentSessionFile: "/forged.jsonl" },
+    { cwd: "/repo", prompt: "task", parentSessionId: "other" },
+  ])("rejects malformed or caller-forged child creation before the service runs", async (payload) => {
+    const start = vi.spyOn(service, "startSubsession");
+    const response = await app.inject({ method: "POST", url: "/sessions/parent/subsessions", payload });
+    expect(response.statusCode).toBe(400);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("returns a missing parent as 404 without falling back to independent creation", async () => {
+    vi.spyOn(service, "startSubsession").mockRejectedValue(new Error("Session not found"));
+    const independent = vi.spyOn(service, "start");
+    const response = await app.inject({ method: "POST", url: "/sessions/missing/subsessions", payload: { cwd: "/repo", prompt: "task" } });
+    expect(response.statusCode).toBe(404);
+    expect(independent).not.toHaveBeenCalled();
+  });
+
   it("returns notification catalog and selected-inbox snapshots with required cwd context", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);
@@ -1321,6 +1356,7 @@ class CapturingRouteSessionService implements SessionRouteService {
   }
 
   list(): never { throw unusedRouteMethod("list"); }
+  startSubsession(): never { throw unusedRouteMethod("startSubsession"); }
 
   start(cwd: string, options?: { startupToken?: string }): Promise<ClientSession> {
     this.startCalls.push({ cwd, startupToken: options?.startupToken });
