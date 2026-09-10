@@ -6,6 +6,7 @@ import { isCachedNewSessionInfo } from "../cachedNewSessions";
 import { shortSessionId } from "../sessionLabels";
 import { isArchivableSessionInfo, isTransientNewSessionInfo } from "../sessionPersistence";
 import { normalizeSessionPath } from "../sessionPaths";
+import { readHiddenSubagentParents, subagentParentKey, writeHiddenSubagentParents } from "../sessionTreeDisclosure";
 import { isSessionActive } from "../../../shared/activity";
 import { actionMenuPanelStyle } from "./actionMenu";
 import { renderActionActivityIndicator, type ActivityIndicatorKind } from "./activityBadge";
@@ -37,6 +38,7 @@ type SessionSelectionScope = "current" | "archived";
 @customElement("session-list")
 export class SessionList extends LitElement implements KeyboardNavigableSection {
   @property({ attribute: false }) sessions: SessionInfo[] = [];
+  @property() machineId = "local";
   @property({ attribute: false }) statuses: Record<string, SessionStatus> = {};
   @property({ attribute: false }) activities: Record<string, SessionActivity> = {};
   @property({ attribute: false }) sending: Record<string, true> = {};
@@ -71,6 +73,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   @state() private archivedExpanded = false;
   @state() private selectionScopes: ReadonlySet<SessionSelectionScope> = new Set();
   @state() private selectedSessionIds: ReadonlySet<string> = new Set();
+  @state() private hiddenSubagentParents: ReadonlySet<string> = new Set();
 
   // Sessions are replaced on refresh; transient UI state must not rebuild the tree.
   private treeCache?: {
@@ -115,6 +118,14 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     super.disconnectedCallback();
   }
 
+  protected override willUpdate(changed: PropertyValues<this>): void {
+    if (changed.has("machineId")) {
+      this.hiddenSubagentParents = readHiddenSubagentParents(this.machineId);
+      this.openMenuSessionId = undefined;
+      this.pruneSelectedSessionIds();
+    }
+  }
+
   protected override updated(changed: PropertyValues<this>): void {
     if (changed.has("sessions")) {
       if (this.openMenuSessionId !== undefined && !this.sessions.some((session) => session.id === this.openMenuSessionId)) this.openMenuSessionId = undefined;
@@ -154,25 +165,32 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   }
 
   override render() {
+    // Classify before hiding descendants, so archived children do not become orphan roots.
     const tree = this.sessionTree();
-    const { currentRows, currentSelectableSessions, archivedRows, archivedSessions } = tree;
-    // The collapsed heading still needs tree counts, but never descendant actions.
+    const visibleIds = this.visibleSessionIds();
+    const currentRows = tree.currentRows.filter((row) => visibleIds.has(row.session.id));
+    const archivedRows = tree.archivedRows.filter((row) => visibleIds.has(row.session.id));
+    const currentSelectableSessions = currentRows.map((row) => row.session).filter((session) => sessionSelectionScope(session) === "current");
+    const archivedSessions = archivedRows.map((row) => row.session);
     if (!this.collapsed) tree.descendantCounts ??= unarchivedDescendantCounts(this.sessions);
     const descendantCounts = tree.descendantCounts;
-    const unreadCount = unreadSessionCount(currentSelectableSessions, this.unreadSessionIds);
+    const allDescendantCounts = this.collapsed ? undefined : sessionDescendantCounts(this.sessions, () => true);
+    const workingSubagents = this.collapsed ? undefined : activeSubagentCounts(this.sessions, this.statuses, this.activities, this.sending);
+    // Hidden rows still contribute to the unread heading.
+    const unreadCount = unreadSessionCount(tree.currentSelectableSessions, this.unreadSessionIds);
     return html`
       <section>
-        ${this.renderHeading(currentRows.length + archivedRows.length, currentSelectableSessions, unreadCount)}
+        ${this.renderHeading(tree.currentRows.length + tree.archivedRows.length, currentSelectableSessions, unreadCount)}
         ${this.collapsed ? null : html`
           <div class="list-body">
             ${this.renderCurrentSelectionToolbar(currentSelectableSessions)}
             ${this.startingCount > 0 ? this.renderStartingSession() : null}
-            ${repeat(currentRows, (row) => row.session.id, (row) => this.renderSession(row, descendantCounts?.get(row.session.id) ?? 0, "current"))}
+            ${repeat(currentRows, (row) => row.session.id, (row) => this.renderSession(row, descendantCounts?.get(row.session.id) ?? 0, "current", allDescendantCounts?.get(row.session.id) ?? 0, workingSubagents?.get(row.session.id) ?? 0))}
             ${archivedRows.length > 0 ? html`
               ${this.renderArchivedHeading(archivedSessions)}
               ${this.archivedExpanded ? html`
                 ${this.renderArchivedSelectionToolbar(archivedSessions)}
-                ${repeat(archivedRows, (row) => row.session.id, (row) => this.renderSession(row, descendantCounts?.get(row.session.id) ?? 0, "archived"))}
+                ${repeat(archivedRows, (row) => row.session.id, (row) => this.renderSession(row, descendantCounts?.get(row.session.id) ?? 0, "archived", allDescendantCounts?.get(row.session.id) ?? 0, workingSubagents?.get(row.session.id) ?? 0))}
               ` : null}
             ` : null}
           </div>
@@ -301,8 +319,9 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
       : html`<button @click=${() => { this.clearSelection(scope); }}>Clear selected (${selectedCount})</button>`;
   }
 
-  private renderSession(row: SessionRow, descendantCount: number, scope: SessionSelectionScope) {
+  private renderSession(row: SessionRow, descendantCount: number, scope: SessionSelectionScope, allDescendantCount: number, workingSubagents: number) {
     const { session } = row;
+    const subagentsHidden = this.hiddenSubagentParents.has(subagentParentKey(session));
     const cappedDepth = Math.min(row.depth, 2);
     const canBulkSelect = sessionSelectionScope(session) === scope;
     const selectionActive = this.selectionScopes.has(scope);
@@ -325,13 +344,16 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
       >
         <div class="action-main ${selectionActive ? "selecting" : ""}">
           ${showsCheckbox ? html`<input class="session-checkbox" type="checkbox" aria-label=${`Select ${sessionLabel(session)}`} .checked=${bulkSelected} @click=${(event: MouseEvent) => { event.stopPropagation(); }} @change=${() => { this.toggleSelected(session.id); }}>` : null}
-          <span class="action-name-line"><span class="action-name" dir="auto">${this.renderRowMarker(row)}${sessionLabel(session)}</span>${this.renderRowBadges(row)}</span><small>${this.renderSessionMetaPrefix(session, status, activity)}${String(session.messageCount)} messages</small>
-          ${this.renderActivity(indicatorKind, unread)}
+          <span class="action-name-line"><span class="action-name" dir="auto">${this.renderRowMarker(row)}${sessionLabel(session)}</span>${this.renderRowBadges(row, subagentsHidden ? allDescendantCount : 0)}</span><small>${this.renderSessionMetaPrefix(session, status, activity)}${String(session.messageCount)} messages</small>
+          ${this.renderActivity(indicatorKind, unread, workingSubagents)}
         </div>
         <div class="action-menu">
           <button class="action-menu-toggle" title="Session actions" @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(session.id, event.currentTarget); }}>⋯</button>
           ${this.openMenuSessionId === session.id ? html`
             <div class="action-menu-panel" style=${this.menuStyle}>
+              ${allDescendantCount > 0 || subagentsHidden ? html`
+                <button class="subagent-visibility-toggle" aria-expanded=${String(!subagentsHidden)} title="Only changes the list; subagents keep running" @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleSubagents(session, event.currentTarget); }}>${subagentsHidden ? "Show subagents" : "Hide subagents"} (${allDescendantCount})</button>
+              ` : null}
               ${session.archived === true
                 ? html`
                   <button title="Restore session" @click=${() => { this.openMenuSessionId = undefined; this.onRestore?.(session); }}>Restore</button>
@@ -372,9 +394,26 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
    * Badges live outside `.action-name` so the clamped, ellipsizing title cannot
    * hide them.
    */
-  private renderRowBadges(row: SessionRow) {
-    if (row.depth <= 2) return null;
-    return html`<span class="row-badges"><span class="badge">depth ${row.depth}</span></span>`;
+  private renderRowBadges(row: SessionRow, hiddenCount: number) {
+    if (row.depth <= 2 && hiddenCount === 0) return null;
+    return html`<span class="row-badges">${row.depth > 2 ? html`<span class="badge">depth ${row.depth}</span>` : null}${hiddenCount > 0 ? html`<span class="badge hidden-subagents" title=${`${String(hiddenCount)} subagents hidden; execution is unchanged`}>${hiddenCount} hidden</span>` : null}</span>`;
+  }
+
+  private visibleSessionIds(): ReadonlySet<string> {
+    return new Set(sessionRows(this.sessions, this.hiddenSubagentParents).map((row) => row.session.id));
+  }
+
+  private toggleSubagents(session: SessionInfo, target: EventTarget | null): void {
+    const next = new Set(this.hiddenSubagentParents);
+    const key = subagentParentKey(session);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    this.hiddenSubagentParents = next;
+    writeHiddenSubagentParents(this.machineId, next);
+    this.openMenuSessionId = undefined;
+    // Do not let a later bulk action unexpectedly archive a now-hidden row.
+    this.pruneSelectedSessionIds();
+    if (target instanceof HTMLElement) target.closest(".action-row")?.querySelector<HTMLButtonElement>(".action-menu-toggle")?.focus();
   }
 
   private handleSessionKeydown(event: KeyboardEvent, session: SessionInfo, scope: SessionSelectionScope): void {
@@ -464,7 +503,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   }
 
   private pruneSelectedSessionIds(): void {
-    const existing = new Set(this.sessions.map((session) => session.id));
+    const existing = this.visibleSessionIds();
     const next = new Set([...this.selectedSessionIds].filter((sessionId) => existing.has(sessionId)));
     if (next.size !== this.selectedSessionIds.size) this.selectedSessionIds = next;
     if (this.selectionScopes.has("archived") && !this.sessions.some((session) => session.archived === true)) this.closeSelection("archived");
@@ -503,9 +542,14 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     return "";
   }
 
-  private renderActivity(kind: ActivityIndicatorKind | undefined, unread: boolean) {
-    const label = kind === "sending" ? "Sending message" : "Session active";
-    return renderActionActivityIndicator(kind, label, unread ? "Unread session activity" : undefined);
+  private renderActivity(kind: ActivityIndicatorKind | undefined, unread: boolean, workingSubagents: number) {
+    const ownLabel = kind === "sending" ? "Sending message" : "Session active";
+    const childLabel = `${String(workingSubagents)} ${workingSubagents === 1 ? "subagent" : "subagents"} active`;
+    const label = workingSubagents === 0 ? ownLabel : kind === undefined ? childLabel : `${ownLabel} · ${childLabel}`;
+    // Presentation only: a busy descendant must not make the parent's own
+    // runtime streaming or disable its input/reload/other session controls.
+    const visibleKind = kind ?? (workingSubagents > 0 ? "session" : undefined);
+    return renderActionActivityIndicator(visibleKind, label, unread ? "Unread session activity" : undefined);
   }
 
   static override styles = [listStyles, css`
@@ -559,7 +603,7 @@ function removeSessionIds(sessionIds: ReadonlySet<string>, removedIds: readonly 
   return new Set([...sessionIds].filter((sessionId) => !removed.has(sessionId)));
 }
 
-function unarchivedDescendantCounts(sessions: SessionInfo[]): Map<string, number> {
+function sessionDescendantCounts(sessions: SessionInfo[], include: (session: SessionInfo) => boolean = (session) => session.archived !== true): Map<string, number> {
   const childrenByParentPath = new Map<string, SessionInfo[]>();
   for (const session of sessions) {
     if (session.parentSessionPath === undefined) continue;
@@ -577,13 +621,24 @@ function unarchivedDescendantCounts(sessions: SessionInfo[]): Map<string, number
     let count = 0;
     for (const child of childrenByParentPath.get(sessionKey) ?? []) {
       if (nextSeenPaths.has(normalizeSessionPath(child.path))) continue;
-      if (child.archived !== true) count += 1;
+      if (include(child)) count += 1;
       count += countFor(child, nextSeenPaths);
     }
     return count;
   };
 
   return new Map(sessions.map((session) => [session.id, countFor(session, new Set())]));
+}
+
+/** Count work throughout the full tree, independently of row visibility. */
+export function activeSubagentCounts(
+  sessions: SessionInfo[],
+  statuses: Record<string, SessionStatus> = {},
+  activities: Record<string, SessionActivity> = {},
+  sending: Record<string, true> = {},
+): Map<string, number> {
+  return sessionDescendantCounts(sessions, (session) =>
+    sessionRowActivityKind(session, statuses[session.id], activities[session.id], sending[session.id] === true) !== undefined);
 }
 
 /**
@@ -647,7 +702,7 @@ export function sessionRowsForCurrentTree(sessions: SessionInfo[]): SessionRow[]
   return sessionRows(sessions.filter((session) => visible.has(session.id)));
 }
 
-function sessionRows(sessions: SessionInfo[]): SessionRow[] {
+function sessionRows(sessions: SessionInfo[], hiddenParents: ReadonlySet<string> = new Set()): SessionRow[] {
   const byPath = sessionsByNormalizedPath(sessions);
   const childrenByPath = new Map<string, SessionInfo[]>();
   const roots: SessionInfo[] = [];
@@ -670,6 +725,7 @@ function sessionRows(sessions: SessionInfo[]): SessionRow[] {
     if (stack.has(sessionKey)) return;
     const parentPath = session.parentSessionPath;
     rows.push({ session, depth, hasMissingParent: parentPath !== undefined && !byPath.has(normalizeSessionPath(parentPath)) });
+    if (hiddenParents.has(subagentParentKey(session))) return;
     const nextStack = new Set(stack);
     nextStack.add(sessionKey);
     for (const child of childrenByPath.get(sessionKey) ?? []) visit(child, depth + 1, nextStack);

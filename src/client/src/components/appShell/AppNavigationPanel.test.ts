@@ -7,6 +7,7 @@ import { machineStatusSnapshot } from "../../machineStatus.testSupport";
 import { MachineList } from "../MachineList";
 import { MachineSwitcher } from "../MachineSwitcher";
 import { ProjectList } from "../ProjectList";
+import { SessionList } from "../SessionList";
 import { WorkspaceList } from "../WorkspaceList";
 import { SessionList } from "../SessionList";
 import { AppNavigationPanel, shouldShowMachinesSection } from "./AppNavigationPanel";
@@ -51,6 +52,14 @@ describe("header identity", () => {
 });
 
 describe("machine status wiring", () => {
+  it("scopes session-list preferences to the selected machine, defaulting to local", async () => {
+    const panel = await mountPanel({}, undefined);
+    expect(section(panel, "session-list", SessionList).machineId).toBe("local");
+    panel.selectedMachine = machine("remote-a");
+    await panel.updateComplete;
+    expect(section(panel, "session-list", SessionList).machineId).toBe("remote-a");
+  });
+
   it("gives machine sections every snapshot and project and workspace sections the selected machine's", async () => {
     const local = machineStatusSnapshot({ machine: { "core:working": true } });
     const remote = machineStatusSnapshot({ machine: { "core:unread": true } });

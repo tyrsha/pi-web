@@ -44,6 +44,7 @@ export interface StartSubsessionRequest {
   prompt: string;
   name?: string;
   model?: string;
+  thinkingLevel?: ClientThinkingLevel;
 }
 
 export interface StartSubsessionResult {

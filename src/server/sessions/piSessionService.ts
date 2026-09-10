@@ -1623,7 +1623,7 @@ export class PiSessionService implements SessionRouteService {
         parentSessionFile: parent.sessionFile ?? parent.sessionManager.getSessionFile(),
         prompt,
         ...(parent.model === undefined ? {} : { model: parent.model }),
-        thinkingLevel: parent.thinkingLevel,
+        thinkingLevel: request.thinkingLevel ?? parent.thinkingLevel,
         ...(request.model === undefined ? {} : { modelSpec: request.model }),
         ...(request.name === undefined ? {} : { name: request.name }),
       });

@@ -69,6 +69,17 @@ describe("PiSessionService", () => {
       } finally { await service.dispose(); }
     });
 
+    it("overrides child thinking before startup without changing the parent", async () => {
+      const { parent, service } = subsessionService({ allowed: true, cwd: "/workspace" });
+      const spawn = vi.spyOn(service, "spawnSubsession");
+      try {
+        await service.start("/workspace");
+        await service.startSubsession(sessionRef("parent-1"), { prompt: "retry", thinkingLevel: "high" });
+        expect(spawn).toHaveBeenCalledWith(expect.objectContaining({ thinkingLevel: "high" }));
+        expect(parent.session.thinkingLevel).toBe("off");
+      } finally { await service.dispose(); }
+    });
+
     it("refuses child API requests with a mismatched parent workspace", async () => {
       const { child, service } = subsessionService({ allowed: true, cwd: "/workspace" });
       try {

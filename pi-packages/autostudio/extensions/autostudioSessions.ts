@@ -1,4 +1,5 @@
 import { request as httpRequest } from "node:http";
+import type { ModelTarget } from "./autostudioConfig.js";
 
 export type DaemonRequest = (method: string, path: string, body?: unknown) => Promise<unknown>;
 
@@ -54,15 +55,28 @@ export function createSessionHost(request: DaemonRequest, cwd: string, parentSes
   if (parentSessionId === "") throw new Error("Autostudio requires a parent session id");
   const base = (id: string) => `/sessions/${encodeURIComponent(id)}`;
   const query = new URLSearchParams({ cwd }).toString();
+  // Older daemons reject the thinkingLevel field outright. Remember the
+  // rejection once per host so later attempts omit the field immediately.
+  let daemonLacksThinkingLevel = false;
   return {
-    async start(input: { prompt: string; cwd: string; name: string }): Promise<{ id: string; url: string }> {
+    async start(input: { prompt: string; cwd: string; name: string; model?: string; thinkingLevel?: ModelTarget["thinkingLevel"] }): Promise<{ id: string; url: string }> {
       if (input.cwd !== cwd) throw new Error("Worker workspace differs from the manager session");
       // One daemon-owned operation creates the parent link, names the child and
       // starts it. Never fall back to an independent POST /sessions on old hosts.
-      const created = record(await request("POST", `${base(parentSessionId)}/subsessions`, {
+      const create = (thinkingLevel?: ModelTarget["thinkingLevel"]) => request("POST", `${base(parentSessionId)}/subsessions`, {
         cwd, prompt: input.prompt, name: input.name,
-        ...(model === undefined ? {} : { model: `${model.provider}/${model.id}` }),
-      }));
+        ...(input.model !== undefined ? { model: input.model } : model === undefined ? {} : { model: `${model.provider}/${model.id}` }),
+        ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
+      });
+      let created: Record<string, unknown>;
+      try {
+        created = record(await create(daemonLacksThinkingLevel ? undefined : input.thinkingLevel));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (input.thinkingLevel === undefined || daemonLacksThinkingLevel || !message.includes("Unsupported subsession field: thinkingLevel")) throw error;
+        daemonLacksThinkingLevel = true;
+        created = record(await create(undefined));
+      }
       const id = created["sessionId"];
       if (typeof id !== "string" || id === "" || created["parentSessionId"] !== parentSessionId || created["cwd"] !== cwd) {
         throw new Error("Pi Web did not return a tracked worker for this parent and workspace");

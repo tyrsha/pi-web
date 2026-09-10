@@ -137,6 +137,21 @@ function startInput(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe("Autostudio delegation", () => {
+  it("binds each model target to its own runtime agent, even with overlapping dispatches", async () => {
+    const f = await fixture();
+    const sol = { model: "p/sol", thinkingLevel: "medium" as const };
+    const astra = { model: "p/astra", thinkingLevel: "high" as const };
+    const first = f.delegation.dispatch("worker", "first", sol);
+    const second = f.delegation.dispatch("worker", "second", astra);
+    expect(f.request(0).params.agent).not.toBe(f.request(1).params.agent);
+    await f.provider().start({ ...startInput(f), agent: f.request(1).params.agent });
+    await f.provider().start({ ...startInput(f), agent: f.request(0).params.agent });
+    expect(f.host.start.mock.calls.map(([input]) => ({ model: input.model, thinkingLevel: input.thinkingLevel }))).toEqual([astra, sol]);
+    f.reply(f.request(0), "one"); f.complete(f.request(0), "one");
+    f.reply(f.request(1), "two"); f.complete(f.request(1), "two");
+    await Promise.all([first, second]);
+  });
+
   it("registers runtime external-job agents and delegates through async RPC, awaiting the exact completion", async () => {
     const f = await fixture();
     expect(f.registrations.map((registration) => registration.definition.systemPrompt)).toEqual(["Worker system prompt", "Review independently"]);
@@ -209,7 +224,7 @@ describe("Autostudio delegation", () => {
     const result = f.delegation.dispatch("worker", "task");
     f.reply(f.request(), "run-1");
     f.complete(f.request(), "run-1", { ...terminal, results: [], summary: "termination reason" });
-    await expect(result).resolves.toEqual({ exitCode: terminal.exitCode || 1, output: "termination reason", truncated: false });
+    await expect(result).resolves.toEqual({ exitCode: terminal.exitCode || 1, output: "termination reason", truncated: false, ...(terminal.stopped === true || terminal.interrupted === true || terminal.timedOut === true ? { stopped: true } : {}) });
     expect(f.progress.mock.lastCall?.[0]).toContain(terminal.state === "stopped" ? "stopped" : "failed");
   });
 

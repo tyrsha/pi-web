@@ -7,7 +7,7 @@
  * result evaluation, optional reviewer pass, and roadmap/state updates.
  *
  * The loop never stops merely because a worker finished. It stops only for:
- *   1. goal complete (roadmap clear + worker confirms, or explicit marker)
+ *   1. goal complete (roadmap clear + executed QA + independent final review)
  *   2. genuine human-only blocker with no other useful work remaining
  *   3. STOP file (`/autostudio stop`), safety refusal, or max-task budget
  *
@@ -17,7 +17,9 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createModelRouting, readAutostudioConfig, selectManager } from "./autostudioConfig.js";
 import { createDelegation } from "./autostudioDelegation.js";
+import { evaluateQa, QA_SYSTEM_PROMPT, qaCompletionSummary, qaHumanBlocker } from "./autostudioQa.js";
 import { createSessionHost, daemonRequest } from "./autostudioSessions.js";
 import {
   addTaskToRoadmap,
@@ -41,7 +43,6 @@ import {
   nextTaskFromRoadmap,
   parsePlannerTasks,
   readProjectState,
-  reportsGoalComplete,
   reportsIncomplete,
   requestStop,
   reviewPassed,
@@ -64,7 +65,8 @@ const WORKER_SYSTEM_PROMPT = `You are an Autostudio worker agent. You run in an 
 
 Rules:
 - Investigate the repository/workspace yourself as needed; do not assume prior context.
-- Do the task, verify it (run tests/builds/checks when relevant), and confirm the acceptance criteria.
+- Do the task, verify it (run tests/builds/checks when relevant), and confirm the acceptance criteria. For implementation tasks, leave reproducible launch instructions and critical gameplay/E2E scenarios for the separate final QA agent. Unit/build checks alone do not certify mission completion.
+- Do not edit .autostudio manager state. A GOAL-COMPLETE claim is advisory only; the manager requires executed final QA and independent review.
 - If your first approach fails, try at least one different reasonable approach before giving up.
 - Do NOT redesign the roadmap, continue to other milestones, or ask the user questions. Pick a reasonable reversible default for small decisions.
 - Report formats: start a line with TASK-FAILED and explain if you cannot complete the task. Never write the literal string TASK-FAILED anywhere else (do not quote it, even when discussing a previous attempt) — the manager treats its presence as failure. If the overall project goal from the task context is fully achieved and verified, emit a line containing exactly GOAL-COMPLETE.
@@ -116,7 +118,7 @@ function shortSummary(text: string, max = 300): string {
 }
 
 interface LoopOptions {
-  dispatch: (role: DispatchRole, task: string) => Promise<WorkerResult>;
+  dispatch: (role: DispatchRole, task: string, escalated?: boolean) => Promise<WorkerResult>;
   maxTasks: number;
   notify: (message: string, type?: "info" | "warning" | "error") => void;
 }
@@ -128,7 +130,9 @@ interface LoopOutcome {
   detail: string;
 }
 
-type DispatchRole = "worker" | "reviewer" | "planner" | "researcher";
+type DispatchRole = "worker" | "reviewer" | "planner" | "researcher" | "qa";
+
+const QA_REPAIR_TASK = "Resolve final QA findings in .autostudio/QA.md, including missing execution/tooling or coverage; implement repairs and verify. Do not edit manager state or declare the mission complete.";
 
 function describeWorkPlan(cwd: string, mission: string, task: string, from: "Next" | "Later" | "single"): string {
   return `Project workspace: ${cwd}\n\nOverall mission (.autostudio/MISSION.md):\n${mission}\n\nYour task (${from}):\n${task}\n\nAcceptance: the task is done only when its outcome is implemented AND verified (tests/checks/links as appropriate). Report truthfully; never claim success without verification.`;
@@ -141,6 +145,8 @@ async function runLoop(cwd: string, options: LoopOptions): Promise<LoopOutcome> 
   // once with a different angle (spec: incomplete research is not a blocker)
   // and only then treats the stall as needing human planning input.
   let plannerMisses = 0;
+  // A new run must not display a previous run's verification as current.
+  writeState(cwd, updateStateField(updateStateField(readProjectState(cwd).state, "Tests", "not verified for current run — final QA required"), "Last update", "work/QA pending — mission not complete"));
 
   for (let iteration = 1; iteration <= options.maxTasks; iteration++) {
     if (isStopRequested(cwd)) {
@@ -153,15 +159,50 @@ async function runLoop(cwd: string, options: LoopOptions): Promise<LoopOutcome> 
     if (!picked) {
       // A clear roadmap only means "complete" after at least one task was
       // finished. A fresh workspace (placeholders, no history) needs planning.
+      if (tasksInSection(state.roadmap, "Blocked").length > 0 && roadmapIsClear(state.roadmap)) {
+        return { tasksCompleted: completed, tasksFailed: failed, stoppedFor: "blocked", detail: "Human-blocked tasks remain. Resolve them before final QA and mission completion." };
+      }
       if (roadmapIsClear(state.roadmap) && roadmapHasHistory(state.roadmap)) {
-        appendToFile(cwd, "log.md", `## Loop checkpoint\n\nRoadmap is clear after ${String(completed)} completed task(s). Goal treated as complete.`);
-        writeState(cwd, updateStateField(state.state, "Last update", "goal complete — roadmap clear"));
-        return {
-          tasksCompleted: completed,
-          tasksFailed: failed,
-          stoppedFor: "complete",
-          detail: `Roadmap is clear. Completed ${String(completed)} task(s), ${String(failed)} failed. Goal complete.`,
-        };
+        // All completion paths converge here, including resumed/legacy roadmaps
+        // and worker GOAL-COMPLETE claims. Never reuse an earlier QA pass.
+        writeState(cwd, updateStateField(updateStateField(state.state, "Tests", "final QA running — not yet verified"), "Last update", "final QA running — mission not complete"));
+        options.notify("Autostudio: implementation tasks finished — starting mandatory gameplay/E2E QA.", "info");
+        const qa = await options.dispatch("qa", `Workspace: ${cwd}\n\nOverall mission:\n${state.mission}\n\nRoadmap:\n${state.roadmap}\n\nRun final acceptance QA on the current deliverable. Read .autostudio/QA.md if present for prior findings; independently retest them and the critical journeys.`, countFailures(state.failures, QA_REPAIR_TASK) > 0);
+        const evaluation = evaluateQa(qa);
+        appendToFile(cwd, "QA.md", `## QA attempt\n\nMission:\n${state.mission}\n\nExit: ${String(qa.exitCode)}; truncated: ${String(qa.truncated)}\n\n${qa.output}\n\nGate: ${evaluation.reason}`);
+        if (isStopRequested(cwd)) return { tasksCompleted: completed, tasksFailed: failed, stoppedFor: "stop", detail: "STOP requested during QA; mission not complete." };
+        const blocker = qaHumanBlocker(evaluation.report);
+        if (blocker !== undefined) {
+          const queued = addTaskToRoadmap(readProjectState(cwd).roadmap, "Next", QA_REPAIR_TASK, { force: true });
+          writeRoadmap(cwd, blockTaskInRoadmap(queued, QA_REPAIR_TASK, blocker));
+          writeState(cwd, updateStateField(updateStateField(readProjectState(cwd).state, "Tests", "QA blocked — not verified"), "Last update", `QA blocked: ${blocker}`));
+          appendToFile(cwd, "DECISIONS.md", formatDecisionEntry(`Final QA blocked: ${blocker}. See .autostudio/QA.md; mission not complete.`));
+          return { tasksCompleted: completed, tasksFailed: failed, stoppedFor: "blocked", detail: `Final QA blocked: ${blocker}. Evidence: .autostudio/QA.md. Mission not complete.` };
+        }
+        let rejection = evaluation.reason;
+        if (evaluation.passed && evaluation.report !== undefined) {
+          const review = await options.dispatch("reviewer", `Workspace: ${cwd}\n\nOverall mission:\n${state.mission}\n\nQA evidence:\n${qa.output}\n\nIndependently verify the entire mission and current files, not just the report format. Inspect the referenced evidence and rerun critical checks. Confirm the project classification: games require actual player-input gameplay/progression and applicable end/restart paths; other executable projects require public-interface E2E, not unit mocks/build-only checks. Artifacts require actual consumer/render inspection. Reject missing mission coverage, fabricated/stale evidence, unresolved defects or skipped checks. Do not change implementation or .autostudio state. Return REVIEW: PASS only if the mission is fully verified.`, countFailures(state.failures, QA_REPAIR_TASK) > 0);
+          appendToFile(cwd, "QA.md", `## Final review\n\nExit: ${String(review.exitCode)}; truncated: ${String(review.truncated)}\n\n${review.output}`);
+          if (isStopRequested(cwd)) return { tasksCompleted: completed, tasksFailed: failed, stoppedFor: "stop", detail: "STOP requested during final review; mission not complete." };
+          const current = readProjectState(cwd);
+          if (current.mission !== state.mission || !roadmapIsClear(current.roadmap) || tasksInSection(current.roadmap, "Blocked").length > 0) {
+            options.notify("Autostudio: mission/roadmap changed during QA — completion withheld.", "warning");
+            continue;
+          }
+          if (review.exitCode === 0 && !review.truncated && reviewPassed(review.output)) {
+            writeState(cwd, updateStateField(updateStateField(current.state, "Tests", "gameplay/E2E QA and independent final review passed — .autostudio/QA.md"), "Last update", "goal complete — QA verified"));
+            appendToFile(cwd, "DECISIONS.md", formatDecisionEntry("Goal complete: clear roadmap, executed final QA and independent final review passed. Evidence: .autostudio/QA.md."));
+            return { tasksCompleted: completed, tasksFailed: failed, stoppedFor: "complete", detail: `Goal complete. Completed ${String(completed)} task(s), ${String(failed)} failed.\n${qaCompletionSummary(evaluation.report)}` };
+          }
+          rejection = `Final review rejected QA/mission completion: ${shortSummary(review.output, 600)}`;
+        }
+        failed += 1;
+        const prior = countFailures(readProjectState(cwd).failures, QA_REPAIR_TASK);
+        appendToFile(cwd, "FAILURES.md", formatFailureEntry(QA_REPAIR_TASK, rejection, prior + 1 >= FAILURE_STRATEGY_LIMIT ? "MANDATORY strategy change: shrink repair scope, change tools or approach; read full QA.md and rerun QA" : "read full QA.md, repair findings, then run fresh final QA"));
+        writeRoadmap(cwd, addTaskToRoadmap(readProjectState(cwd).roadmap, "Next", QA_REPAIR_TASK, { force: true }));
+        writeState(cwd, updateStateField(updateStateField(readProjectState(cwd).state, "Tests", "QA/review rejected — not verified"), "Last update", "QA rejected — repair and fresh QA required"));
+        options.notify(`Autostudio: QA not complete — repair queued. ${shortSummary(rejection, 400)} Evidence: .autostudio/QA.md`, "warning");
+        continue;
       }
       // No actionable tasks: ask a planner worker to propose the next slice.
       // This covers fresh workspaces as well as stuck states (e.g. In
@@ -169,8 +210,9 @@ async function runLoop(cwd: string, options: LoopOptions): Promise<LoopOutcome> 
       const plannerTask = plannerMisses > 0
         ? `${PLANNER_TASK}\n\nContext: a previous planning attempt produced no usable tasks. Take a different angle: smaller slices, or derive tasks from the most recent worker results and known problems instead of the mission statement.`
         : PLANNER_TASK;
-      const planResult = await options.dispatch("planner", describeWorkPlan(cwd, state.mission, plannerTask, "single"));
-      const planned = parsePlannerTasks(planResult.output);
+      const planResult = await options.dispatch("planner", describeWorkPlan(cwd, state.mission, plannerTask, "single"), plannerMisses > 0);
+      if (isStopRequested(cwd)) return { tasksCompleted: completed, tasksFailed: failed, stoppedFor: "stop", detail: "Stopped during planning; inspect the child before resuming." };
+      const planned = looksLikeFailure(planResult.exitCode, planResult.output) || planResult.truncated ? [] : parsePlannerTasks(planResult.output);
       if (planned.length === 0) {
         plannerMisses += 1;
         appendToFile(cwd, "log.md", `## Planner miss (${String(plannerMisses)})\n\nPlanner produced no usable tasks; ${plannerMisses >= 2 ? "giving up planning, human input needed." : "retrying once with a different angle."}`);
@@ -201,7 +243,8 @@ async function runLoop(cwd: string, options: LoopOptions): Promise<LoopOutcome> 
     // Manager picks the role by task nature (spec): research-flavored tasks
     // go to a researcher that returns evidence without implementing.
     const role = selectRoleForTask(task);
-    const result = await options.dispatch(role, workerPrompt);
+    const result = await options.dispatch(role, workerPrompt, priorFailures > 0);
+    if (isStopRequested(cwd)) return { tasksCompleted: completed, tasksFailed: failed, stoppedFor: "stop", detail: "Stopped during work; inspect the child before resuming." };
     const evalText = evalSlice(result);
     const truncatedNote = result.truncated ? " (eval window truncated)" : "";
     appendToFile(cwd, "log.md", `## Task (iteration ${String(iteration)})\n\n- Task: ${task}\n- Exit: ${String(result.exitCode)}\n- Truncated: ${result.truncated ? "yes" : "no"}${truncatedNote}\n- Summary: ${shortSummary(evalText, 500)}`);
@@ -226,30 +269,7 @@ async function runLoop(cwd: string, options: LoopOptions): Promise<LoopOutcome> 
       continue;
     }
 
-    if (reportsGoalComplete(result.output) && roadmapIsClear(completeTaskInRoadmap(readProjectState(cwd).roadmap, task))) {
-      // Spec mandates a reviewer pass immediately before final goal completion:
-      // a worker's own GOAL-COMPLETE claim is never self-certifying.
-      const goalReview = await options.dispatch(
-        "reviewer",
-        `Overall mission:\n${state.mission}\n\nFinal task:\n${task}\n\nWorker claims the overall goal is complete and verified:\n${evalText}\n\nWorkspace: ${cwd}\n\nVerify the claim against the mission and acceptance criteria.`,
-      );
-      appendToFile(cwd, "log.md", `## Final review\n\n- Verdict: ${shortSummary(goalReview.output.slice(-2000), 400)}`);
-      if (!reviewPassed(goalReview.output)) {
-        const reason = shortSummary(goalReview.output.slice(-2000), 400);
-        appendToFile(cwd, "FAILURES.md", formatFailureEntry(task, `final review rejected goal completion: ${reason}`, "address the review findings, then re-verify the goal"));
-        options.notify("Autostudio: final review rejected goal completion — continuing.", "warning");
-        failed += 1;
-        continue;
-      }
-      const roadmap = completeTaskInRoadmap(readProjectState(cwd).roadmap, task, "verified by worker");
-      writeRoadmap(cwd, roadmap);
-      completed += 1;
-      writeState(cwd, updateStateField(updateStateField(readProjectState(cwd).state, "Last successful task", task), "Last update", "goal complete"));
-      appendToFile(cwd, "DECISIONS.md", formatDecisionEntry(`Goal declared complete: roadmap clear, worker GOAL-COMPLETE confirmed by independent reviewer (${String(completed)} completed, ${String(failed)} failed).`));
-      return { tasksCompleted: completed, tasksFailed: failed, stoppedFor: "complete", detail: `Reviewer confirmed GOAL-COMPLETE with a clear roadmap. Completed ${String(completed)} task(s).` };
-    }
-
-    const failedNow = looksLikeFailure(result.exitCode, result.output);
+    const failedNow = looksLikeFailure(result.exitCode, result.output) || result.truncated;
     const consecutive = failedNow ? priorFailures + 1 : priorFailures;
 
     // Honest-pending reports defer the task: still open, not done, not failed
@@ -266,12 +286,15 @@ async function runLoop(cwd: string, options: LoopOptions): Promise<LoopOutcome> 
       const review = await options.dispatch(
         "reviewer",
         `Task:\n${task}\n\nWorker result to verify:\n${evalText}\n\nWorkspace: ${cwd}`,
+        priorFailures > 0,
       );
       appendToFile(cwd, "log.md", `## Review\n\n- Task: ${task}\n- Verdict: ${shortSummary(review.output.slice(-2000), 400)}`);
-      if (reviewPassed(review.output)) {
+      if (isStopRequested(cwd)) return { tasksCompleted: completed, tasksFailed: failed, stoppedFor: "stop", detail: "Stopped during review; mission not complete." };
+      const accepted = review.exitCode === 0 && !review.truncated && reviewPassed(review.output);
+      if (accepted) {
         options.notify(`Autostudio: review passed — "${shortSummary(task, 80)}".`, "info");
       }
-      if (!reviewPassed(review.output)) {
+      if (!accepted) {
         const reason = shortSummary(review.output.slice(-2000), 400);
         appendToFile(cwd, "FAILURES.md", formatFailureEntry(task, `review rejected: ${reason}`, "fix the review findings with a different approach, then re-verify"));
         options.notify(`Autostudio: review rejected "${shortSummary(task, 80)}" — retrying with feedback.`, "warning");
@@ -312,7 +335,7 @@ async function runLoop(cwd: string, options: LoopOptions): Promise<LoopOutcome> 
     tasksCompleted: completed,
     tasksFailed: failed,
     stoppedFor: "budget",
-    detail: `Task budget (${String(options.maxTasks)}) exhausted with work remaining. Re-run /autostudio start to continue — no human decisions needed unless blocked.`,
+    detail: `Task budget (${String(options.maxTasks)}) exhausted with work or final QA remaining. Mission not complete. Re-run /autostudio start to continue — no human decisions needed unless blocked.`,
   };
 }
 
@@ -331,6 +354,7 @@ function usage(): string {
     "/autostudio start \"<goal>\" [--max N]  explicit form of the above",
     "/autostudio task \"<task>\"              run one worker task, no loop",
     "/autostudio status                      show mission / roadmap / state summary",
+    "/autostudio config                      show model routing (.pi-web/autostudio.json)",
     "/autostudio stop                        request a graceful stop (STOP file)",
     "",
     "Workers run as fresh Pi Web sessions. Open them from the links in this chat.",
@@ -338,7 +362,7 @@ function usage(): string {
   ].join("\n");
 }
 
-export default function (pi: Pick<ExtensionAPI, "on" | "events" | "registerCommand" | "sendMessage">) {
+export default function (pi: Pick<ExtensionAPI, "on" | "events" | "registerCommand" | "sendMessage" | "setModel" | "setThinkingLevel">) {
   let activeDelegation: { dispose(): void } | undefined;
   pi.on("session_shutdown", () => { activeDelegation?.dispose(); activeDelegation = undefined; });
   pi.registerCommand("autostudio", {
@@ -355,10 +379,14 @@ export default function (pi: Pick<ExtensionAPI, "on" | "events" | "registerComma
         if (activeDelegation !== undefined) throw new Error("Autostudio is already running in this session.");
         const socket = process.env["PI_WEB_SESSIOND_SOCKET"];
         if (socket === undefined || socket === "") throw new Error("Autostudio requires Pi Web's session daemon to create visible worker sessions.");
-        const host = createSessionHost(daemonRequest(socket), cwd, ctx.sessionManager.getSessionId(), ctx.model);
+        const config = readAutostudioConfig(cwd, ctx.isProjectTrusted());
+        await selectManager(pi, ctx, config);
+        const routeModel = createModelRouting(config);
+        notify(`Autostudio models: manager ${config.manager.model}:${config.manager.thinkingLevel}; workers ${config.workers.map((target) => `${target.model}:${target.thinkingLevel}`).join(" → ")}; failure escalation ${config.escalation.model}:${config.escalation.thinkingLevel}.`);
+        const host = createSessionHost(daemonRequest(socket), cwd, ctx.sessionManager.getSessionId());
         const delegation = await createDelegation(pi, ctx, host, {
           worker: WORKER_SYSTEM_PROMPT, reviewer: REVIEWER_SYSTEM_PROMPT,
-          researcher: RESEARCHER_SYSTEM_PROMPT, planner: PLANNER_SYSTEM_PROMPT,
+          researcher: RESEARCHER_SYSTEM_PROMPT, planner: PLANNER_SYSTEM_PROMPT, qa: QA_SYSTEM_PROMPT,
         }, notify);
         activeDelegation = delegation;
         const extraFile = process.env["AUTOSTUDIO_WORKER_PROMPT_FILE"];
@@ -370,7 +398,15 @@ export default function (pi: Pick<ExtensionAPI, "on" | "events" | "registerComma
           return [`${entry.message.role}: ${text}`];
         }).join("\n\n").slice(-20_000);
         try {
-          return await operation((role, task) => delegation.dispatch(role, `${extra}\n\nOriginating conversation (context, not a new assignment):\n${conversation}\n\nCurrent assignment:\n${task}`));
+          return await operation(async (role, task, escalated) => {
+            const target = routeModel(role, escalated);
+            const routing = `${role}${escalated === true ? " (failure escalation)" : ""}: ${target.model}:${target.thinkingLevel}`;
+            notify(`Autostudio dispatch — ${routing}`);
+            appendToFile(cwd, "log.md", `## Model routing\n\n${routing}`);
+            const result = await delegation.dispatch(role, `${extra}\n\nOriginating conversation (context, not a new assignment):\n${conversation}\n\nCurrent assignment:\n${task}`, target);
+            if (result.stopped === true) requestStop(cwd);
+            return result;
+          });
         } finally {
           delegation.dispose();
           if (activeDelegation === delegation) activeDelegation = undefined;
@@ -418,9 +454,21 @@ export default function (pi: Pick<ExtensionAPI, "on" | "events" | "registerComma
         }
         if (!isInitialized(cwd)) initWorkspace(cwd, "(ad-hoc single tasks)");
         const mission = readProjectState(cwd).mission;
-        const result = await withWorkers((dispatch) => dispatch(selectRoleForTask(task), describeWorkPlan(cwd, mission, task, "single")));
+        const result = await withWorkers(async (dispatch) => {
+          const role = selectRoleForTask(task);
+          const prompt = describeWorkPlan(cwd, mission, task, "single");
+          const first = await dispatch(role, prompt);
+          if (isStopRequested(cwd) || detectHumanBlocker(first.output) !== undefined || (!looksLikeFailure(first.exitCode, first.output) && !first.truncated)) return first;
+          appendToFile(cwd, "FAILURES.md", formatFailureEntry(task, shortSummary(first.output, 2000), "retry once with the escalation model and a different approach"));
+          return dispatch(role, `${prompt}\n\nPrevious attempt failed. Inspect the current files, change approach, and verify. Previous report (context only):\n${first.output.slice(-OUTPUT_EVAL_CHARS)}`, true);
+        });
         appendToFile(cwd, "log.md", `## Single task\n\n- Task: ${task}\n- Exit: ${String(result.exitCode)}\n- Truncated: ${result.truncated ? "yes" : "no"}\n- Summary: ${shortSummary(evalSlice(result), 500)}`);
-        notify(`Autostudio single task finished (exit ${String(result.exitCode)}). Open the worker session above for its full conversation.`, result.exitCode === 0 ? "info" : "warning");
+        notify(`Autostudio single task finished (exit ${String(result.exitCode)}). Open the worker session above for its full conversation.`, !looksLikeFailure(result.exitCode, result.output) && !result.truncated ? "info" : "warning");
+        return;
+      }
+
+      if (sub === "config") {
+        notify(`Autostudio model routing (.pi-web/autostudio.json):\n${JSON.stringify(readAutostudioConfig(cwd, ctx.isProjectTrusted()), null, 2)}`);
         return;
       }
 

@@ -16,6 +16,34 @@ describe("Pi Web tracked worker sessions", () => {
     expect(url.searchParams.get("cwd")).toBe("/work/한 글");
   });
 
+  it("sends per-attempt model and thinking overrides in the atomic child request", async () => {
+    const request = vi.fn((): Promise<unknown> => Promise.resolve({ sessionId: "child", parentSessionId: "parent", cwd: "/work" }));
+    const host = createSessionHost(request, "/work", "parent", { provider: "p", id: "old" });
+    await host.start({ cwd: "/work", name: "retry", prompt: "task", model: "p/astra", thinkingLevel: "high" });
+    expect(request).toHaveBeenCalledWith("POST", "/sessions/parent/subsessions", { cwd: "/work", name: "retry", prompt: "task", model: "p/astra", thinkingLevel: "high" });
+  });
+
+  it("drops thinking overrides once an older daemon rejects the field", async () => {
+    const request = vi.fn((): Promise<unknown> => Promise.resolve({ sessionId: "child", parentSessionId: "parent", cwd: "/work" }));
+    request.mockImplementationOnce(() => Promise.reject(new Error('Pi Web POST /sessions/parent/subsessions: {"error":"Unsupported subsession field: thinkingLevel"}')));
+    const host = createSessionHost(request, "/work", "parent");
+    await host.start({ cwd: "/work", name: "retry", prompt: "task", thinkingLevel: "high" });
+    expect(request.mock.calls).toEqual([
+      ["POST", "/sessions/parent/subsessions", { cwd: "/work", name: "retry", prompt: "task", thinkingLevel: "high" }],
+      ["POST", "/sessions/parent/subsessions", { cwd: "/work", name: "retry", prompt: "task" }],
+    ]);
+    // The remembered rejection keeps later attempts single-shot.
+    await host.start({ cwd: "/work", name: "worker", prompt: "next", thinkingLevel: "high" });
+    expect(request).toHaveBeenLastCalledWith("POST", "/sessions/parent/subsessions", { cwd: "/work", name: "worker", prompt: "next" });
+    expect(request).toHaveBeenCalledTimes(3);
+  });
+
+  it("rethrows unrelated daemon errors without a second attempt", async () => {
+    const request = vi.fn((): Promise<unknown> => Promise.reject(new Error('Pi Web POST /sessions/parent/subsessions: {"error":"Unsupported subsession field: model"}')));
+    await expect(createSessionHost(request, "/work", "parent").start({ cwd: "/work", name: "retry", prompt: "task", thinkingLevel: "high" })).rejects.toThrow("Unsupported subsession field: model");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it("leaves model inheritance to the daemon when no override was requested", async () => {
     const request = vi.fn((): Promise<unknown> => Promise.resolve({ sessionId: "child", parentSessionId: "parent", cwd: "/work" }));
     await createSessionHost(request, "/work", "parent").start({ cwd: "/work", name: "worker", prompt: "task" });

@@ -63,7 +63,7 @@ function readIfExists(path: string): string {
 }
 
 function missionTemplate(goal: string): string {
-  return `# Mission\n\n${goal.trim()}\n\n## Priorities\n\n1. Real user/project value first\n2. Keep the workspace in a working state\n3. Minimal complexity\n4. Verifiable results\n\n## Completion criteria\n\n- [ ] Goal achieved and verified\n`;
+  return `# Mission\n\n${goal.trim()}\n\n## Priorities\n\n1. Real user/project value first\n2. Keep the workspace in a working state\n3. Minimal complexity\n4. Verifiable results\n\n## Completion criteria\n\n- [ ] Goal achieved and verified\n- [ ] Actual gameplay/public-interface E2E (or delivered-artifact inspection) passed with evidence\n- [ ] Independent final review confirmed mission coverage and QA evidence\n`;
 }
 
 function roadmapTemplate(): string {
@@ -398,7 +398,7 @@ export function detectHumanBlocker(output: string): string | undefined {
   return undefined;
 }
 
-export const AUTOSTUDIO_SUBCOMMANDS = ["start", "task", "status", "stop", "help"] as const;
+export const AUTOSTUDIO_SUBCOMMANDS = ["start", "task", "status", "stop", "help", "config"] as const;
 
 export function isSubcommand(token: string): boolean {
   return AUTOSTUDIO_SUBCOMMANDS.some((sub) => sub === token);

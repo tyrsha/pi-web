@@ -62,12 +62,12 @@ describe("session routes", () => {
   it("creates a tracked child through the parent-scoped endpoint", async () => {
     const start = vi.spyOn(service, "startSubsession").mockResolvedValue({ sessionId: "child", parentSessionId: "parent", cwd: resolve("/repo") });
     const response = await app.inject({ method: "POST", url: "/sessions/parent/subsessions", payload: {
-      cwd: resolve("/repo"), prompt: "Verify the task", name: "Autostudio worker", model: "openai-codex/gpt-5.6-luna",
+      cwd: resolve("/repo"), prompt: "Verify the task", name: "Autostudio worker", model: "openai-codex/gpt-5.6-luna", thinkingLevel: "high",
     } });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ sessionId: "child", parentSessionId: "parent", cwd: resolve("/repo") });
     expect(start).toHaveBeenCalledWith({ id: "parent", cwd: resolve("/repo") }, {
-      prompt: "Verify the task", name: "Autostudio worker", model: "openai-codex/gpt-5.6-luna",
+      prompt: "Verify the task", name: "Autostudio worker", model: "openai-codex/gpt-5.6-luna", thinkingLevel: "high",
     });
   });
 
@@ -77,6 +77,7 @@ describe("session routes", () => {
     { cwd: "/repo", prompt: "task", name: "a\nb" },
     { cwd: "/repo", prompt: "task", name: "a".repeat(201) },
     { cwd: "/repo", prompt: "task", model: 3 },
+    ...[null, 3, "", "ultra", ["high"]].map((thinkingLevel) => ({ cwd: "/repo", prompt: "task", thinkingLevel })),
     { cwd: "/repo", prompt: "task", parentSessionFile: "/forged.jsonl" },
     { cwd: "/repo", prompt: "task", parentSessionId: "other" },
   ])("rejects malformed or caller-forged child creation before the service runs", async (payload) => {

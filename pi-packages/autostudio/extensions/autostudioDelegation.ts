@@ -1,12 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ModelTarget } from "./autostudioConfig.js";
 
 export interface DelegationHost {
-  start(input: { prompt: string; cwd: string; name: string }): Promise<{ id: string; url: string }>;
+  start(input: { prompt: string; cwd: string; name: string; model?: string; thinkingLevel?: ModelTarget["thinkingLevel"] }): Promise<{ id: string; url: string }>;
   status(id: string): Promise<{ state: "running" | "completed" | "failed" | "stopped"; output?: string }>;
 }
 
 export interface DelegationResult {
+  /** Cancellation or an uncertain live child MUST NOT launch a replacement writer. */
+  stopped?: boolean;
   exitCode: number;
   output: string;
   truncated: boolean;
@@ -75,7 +78,9 @@ function completionResult(event: Record<string, unknown>): DelegationResult {
   const output = children.map((child) => typeof child["output"] === "string" && child["output"] !== ""
     ? child["output"] : typeof child["error"] === "string" ? child["error"] : "").filter(Boolean).join("\n\n")
     || (typeof event["summary"] === "string" ? event["summary"] : typeof event["error"] === "string" ? event["error"] : "");
+  const unsafeToRetry = (row: Record<string, unknown>): boolean => row["stopped"] === true || row["interrupted"] === true || row["timedOut"] === true || ["stopped", "paused", "partial"].includes(String(row["state"] ?? row["status"]));
   return {
+    ...(unsafeToRetry(event) || children.some(unsafeToRetry) ? { stopped: true } : {}),
     exitCode: succeeded ? 0 : typeof event["exitCode"] === "number" && event["exitCode"] !== 0 ? event["exitCode"] : 1,
     output,
     truncated: event["truncated"] === true || children.some((child) => child["truncated"] === true) || output.length > OUTPUT_EVAL_CHARS,
@@ -89,7 +94,7 @@ export async function createDelegation(
   host: DelegationHost,
   roles: Record<string, string>,
   progress: Progress,
-): Promise<{ dispatch(role: string, task: string): Promise<DelegationResult>; dispose(): void }> {
+): Promise<{ dispatch(role: string, task: string, target?: ModelTarget): Promise<DelegationResult>; dispose(): void }> {
   const sessionId = ctx.sessionManager.getSessionId();
   const sessionFile = ctx.sessionManager.getSessionFile();
   const cwd = ctx.cwd;
@@ -104,6 +109,7 @@ export async function createDelegation(
   const providerName = `autostudio-${scope}`;
   const agents = new Map<string, string>();
   const agentRoles = new Map<string, string>();
+  const agentTargets = new Map<string, ModelTarget>();
   const registrations: { dispose(): void }[] = [];
   const pending = new Set<() => void>();
   let disposed = false;
@@ -135,7 +141,8 @@ export async function createDelegation(
       const role = agentRoles.get(input.agent);
       if (role === undefined) throw new Error("Unknown Autostudio runtime agent.");
       // pi-subagents composes the registered system prompt and task for us.
-      const started = await host.start({ prompt: input.prompt, cwd: input.cwd, name: `Autostudio ${role}` });
+      const target = agentTargets.get(input.agent);
+      const started = await host.start({ prompt: input.prompt, cwd: input.cwd, name: `Autostudio ${role}`, ...target });
       report(`Autostudio: ${role} started — [Open session](<${started.url}>)`, "info");
       return { providerJobId: started.id, state: "running", handleUrl: started.url };
     },
@@ -160,42 +167,50 @@ export async function createDelegation(
     // Host sessions remain host-owned; disposing this waiter is not cancellation.
   }
 
-  try {
-    for (const [index, [role, systemPrompt]] of Object.entries(roles).entries()) {
-      const name = `autostudio-${scope}-${String(index)}`;
-      // Documented synchronous registration event: the installed owner writes
-      // result before emit returns. Do not load a second agent registry/owner.
-      const request: { version: 1; name: string; definition: Record<string, unknown>; result?: unknown } = {
-        version: 1,
-        name,
-        definition: {
-          description: `Autostudio ${role}`,
-          systemPrompt: systemPrompt.trim(),
-          defaultContext: "fresh",
-          defaultAsync: true,
-          runner: { type: "external-job", provider: providerName },
-        },
-      };
-      pi.events.emit("pi-subagents:runtime-agent-register:v1", request);
-      if (request.result === undefined) throw new Error("pi-subagents is not installed or not ready for runtime agent registration.");
-      const result = record(request.result);
-      if (result?.["ok"] === false && result["error"] instanceof Error) throw result["error"];
-      if (result?.["ok"] !== true || !isRegistration(result["registration"])) {
-        throw new Error("pi-subagents returned a malformed runtime agent registration result.");
-      }
-      registrations.push(result["registration"]);
-      agents.set(role, name);
-      agentRoles.set(name, role);
+  function register(role: string, systemPrompt: string, target?: ModelTarget): string {
+    const key = JSON.stringify([role, target?.model, target?.thinkingLevel]);
+    const existing = agents.get(key);
+    if (existing !== undefined) return existing;
+    const name = `autostudio-${scope}-${String(agents.size)}`;
+    // Documented synchronous registration event: the installed owner writes
+    // result before emit returns. Do not load a second agent registry/owner.
+    const request: { version: 1; name: string; definition: Record<string, unknown>; result?: unknown } = {
+      version: 1,
+      name,
+      definition: {
+        description: `Autostudio ${role}`,
+        systemPrompt: systemPrompt.trim(),
+        defaultContext: "fresh",
+        defaultAsync: true,
+        runner: { type: "external-job", provider: providerName },
+      },
+    };
+    pi.events.emit("pi-subagents:runtime-agent-register:v1", request);
+    if (request.result === undefined) throw new Error("pi-subagents is not installed or not ready for runtime agent registration.");
+    const result = record(request.result);
+    if (result?.["ok"] === false && result["error"] instanceof Error) throw result["error"];
+    if (result?.["ok"] !== true || !isRegistration(result["registration"])) {
+      throw new Error("pi-subagents returned a malformed runtime agent registration result.");
     }
+    registrations.push(result["registration"]);
+    agents.set(key, name);
+    agentRoles.set(name, role);
+    if (target !== undefined) agentTargets.set(name, { ...target });
+    return name;
+  }
+
+  try {
+    for (const [role, systemPrompt] of Object.entries(roles)) register(role, systemPrompt);
   } catch (error) {
     dispose();
     throw error;
   }
 
-  function dispatch(role: string, task: string): Promise<DelegationResult> {
+  function dispatch(role: string, task: string, target?: ModelTarget): Promise<DelegationResult> {
     if (disposed) return Promise.resolve(failure("Autostudio delegation is disposed."));
-    const agent = agents.get(role);
-    if (agent === undefined) return Promise.resolve(failure(`Unknown Autostudio role: ${role}`));
+    const systemPrompt = Object.hasOwn(roles, role) ? roles[role] : undefined;
+    if (systemPrompt === undefined) return Promise.resolve(failure(`Unknown Autostudio role: ${role}`));
+    const agent = register(role, systemPrompt, target);
     const requestId = randomUUID();
     return new Promise((resolve) => {
       let settled = false;
@@ -219,7 +234,7 @@ export async function createDelegation(
         finish(result, stopped ? "stopped" : result.exitCode === 0 ? "completed" : "failed");
       };
       const cancel = (): void => {
-        finish(failure("Delegation disposed; the host session may still be running."), "wait disposed");
+        finish({ ...failure("Delegation disposed; the host session may still be running."), stopped: true }, "wait disposed");
       };
       pending.add(cancel);
       unsubscribeCompletion = pi.events.on(ASYNC_COMPLETE, (payload) => {

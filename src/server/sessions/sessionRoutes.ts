@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { ASK_USER_ID_MAX_LENGTH, ASK_USER_OPTION_LIMIT, ASK_USER_OTHER_TEXT_MAX_LENGTH, ASK_USER_QUESTION_LIMIT, EXTENSION_DIALOG_ID_MAX_LENGTH, EXTENSION_DIALOG_INPUT_MAX_LENGTH, SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH, SESSION_UNREAD_CWD_MAX_LENGTH, SESSION_UNREAD_SESSION_ID_MAX_LENGTH, type AskUserAnswer, type AskUserSubmission, type ExtensionDialogAnswerRequest, type ExtensionDialogCancelRequest, type SessionBulkMutationRequest, type SessionBulkMutationRef, type SessionCleanupRequest, type SessionModelScopeMode, type SessionTreeForkRequest, type SessionTreeNavigateRequest, type SessionTreeSummaryChoice, type SessionUnreadAcknowledgeRequest } from "../../shared/apiTypes.js";
 import { parseSessionDefaultsUpdate } from "../../shared/sessionDefaults.js";
+import { isKnownThinkingLevel } from "../../shared/thinkingLevels.js";
 import { projectBrowserMessageResponse } from "../browserMessageProjection.js";
 import { normalizeRequestCwd } from "../workingDirectory.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
@@ -62,16 +63,19 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
       const body = requireRecord(request.body);
       // Parent file/provenance and the actual worker cwd are resolved by the
       // service, never accepted from a caller-controlled session header.
-      const unknown = Object.keys(body).find((key) => !["cwd", "prompt", "name", "model"].includes(key));
+      const unknown = Object.keys(body).find((key) => !["cwd", "prompt", "name", "model", "thinkingLevel"].includes(key));
       if (unknown !== undefined) throw new Error(`Unsupported subsession field: ${unknown}`);
       const prompt = requireNonEmptyString(body, "prompt");
       const name = body["name"] === undefined ? undefined : requireNonEmptyString(body, "name").trim();
       const model = body["model"] === undefined ? undefined : requireNonEmptyString(body, "model").trim();
+      const thinkingLevel = body["thinkingLevel"];
+      if (thinkingLevel !== undefined && (typeof thinkingLevel !== "string" || !isKnownThinkingLevel(thinkingLevel))) throw new Error("thinkingLevel field is invalid");
       if (name !== undefined && (name.length > 200 || /[\r\n]/u.test(name))) throw new Error("Subsession name must be one line of at most 200 characters");
       return await sessions.startSubsession(sessionRefFromBody(request.params.sessionId, body), {
         prompt,
         ...(name === undefined ? {} : { name }),
         ...(model === undefined ? {} : { model }),
+        ...(typeof thinkingLevel === "string" && isKnownThinkingLevel(thinkingLevel) ? { thinkingLevel } : {}),
       });
     } catch (error) {
       return reply.code(mutationErrorStatus(error)).send({ error: errorMessage(error) });

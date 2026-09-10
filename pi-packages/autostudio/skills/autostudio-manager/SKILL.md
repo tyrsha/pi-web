@@ -21,7 +21,7 @@ declare victory because one task went well, never stall because one task went ba
 
 Only stop for:
 
-- overall goal complete (roadmap clear + verified)
+- overall goal complete (roadmap clear, no blocked tasks, executed final QA + independent final review passed)
 - genuine human-only external blocker with no other useful work
 - safety restriction
 
@@ -59,9 +59,23 @@ or re-plan the milestone — never repeat the same prompt.
 ## Roles
 
 - `worker` implements one task with verification.
-- `reviewer` independently verifies a risky worker result (judges, never rewrites).
+- `reviewer` independently verifies risky worker results and every final QA/mission-completion claim (judges, never rewrites).
+- `qa` actually exercises the delivered project after implementation: gameplay for games, public-interface E2E for other executable projects, consumer/render inspection for artifacts. Reports evidence, never implements fixes.
 - `planner` proposes 3-7 `- [ ]` next tasks when the roadmap has nothing actionable (output is task lines only).
 - `researcher` investigates a question and returns evidence ending in `## Recommendation` (never implements). Use it for the "incomplete research" retry path before committing to an implementation strategy.
+
+## Model routing
+
+The slash loop defaults to Astra Medium for the manager/planner/reviewer,
+alternating Sol/Terra Medium for execution, and Astra High for failed-task retries.
+Use `/autostudio config` to inspect the effective settings. The package-owned
+`.pi-web/autostudio.json` overrides manager, workers and escalation model targets.
+Do not change the parent to High for a child retry. The daemon applies the child
+thinking level before its first prompt. Existing failure logs retain escalation
+on resumed tasks; pending reports and human-only blockers do not escalate.
+Stopped or timed-out waiters require inspecting the child before a replacement.
+Direct `subagent` calls retain their own runner options and do not inherit this
+slash-loop policy. See `../../docs/operation.md` for the full configuration.
 
 ## Environment
 
@@ -75,7 +89,20 @@ files actually changed. Route big changes, auth/security/payment/deploy work,
 low-confidence reports, and post-failure retries through the reviewer.
 A truthful "not done yet / still pending" report is neither success nor
 failure: keep the task open and re-check it. A worker's GOAL-COMPLETE claim
-is never self-certifying — an independent reviewer confirms it first.
+is never self-certifying — fresh executed QA and an independent final review
+must confirm the mission first. A clear or previously completed roadmap does
+not bypass QA. Games require actual controls, progression and applicable
+end/restart behavior, not just a loaded canvas. Web apps require real browser
+journeys; API/CLI/library projects require public-interface E2E. Unit tests,
+builds and health checks alone cannot certify completion.
+
+Use available automation directly, not /gstack qa. Retain each attempt in
+QA.md with environment, reproducible steps, expected/observed results and
+log/trace/screenshot references. Failed, skipped, truncated or missing QA is
+not a pass. Queue repairs, change strategy on repeated failures, then rerun
+fresh QA. Only human-only requirements may park the QA task as blocked.
+Report completion with tested scenarios, outcomes and evidence paths; report
+stop/budget/blockers as incomplete, never as successful QA.
 Research-flavored tasks go to the researcher (evidence, no implementation).
 Record mission changes, forced strategy pivots, blocked parks, and goal
 completion in DECISIONS.md.
