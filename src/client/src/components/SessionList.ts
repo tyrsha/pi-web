@@ -76,6 +76,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   @state() private hiddenSubagentParents: ReadonlySet<string> = new Set();
 
   // Sessions are replaced on refresh; transient UI state must not rebuild the tree.
+  private readonly subagentKeys = new WeakMap<SessionInfo, string>();
+  private visibleCache?: { sessions: SessionInfo[]; hidden: ReadonlySet<string>; ids: ReadonlySet<string> };
   private treeCache?: {
     sessions: SessionInfo[];
     currentRows: SessionRow[];
@@ -167,12 +169,12 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   override render() {
     // Classify before hiding descendants, so archived children do not become orphan roots.
     const tree = this.sessionTree();
-    const visibleIds = this.visibleSessionIds();
-    const currentRows = tree.currentRows.filter((row) => visibleIds.has(row.session.id));
-    const archivedRows = tree.archivedRows.filter((row) => visibleIds.has(row.session.id));
+    const visibleIds = this.collapsed ? undefined : this.visibleSessionIds();
+    const currentRows = visibleIds === undefined ? tree.currentRows : tree.currentRows.filter((row) => visibleIds.has(row.session.id));
+    const archivedRows = visibleIds === undefined ? tree.archivedRows : tree.archivedRows.filter((row) => visibleIds.has(row.session.id));
     const currentSelectableSessions = currentRows.map((row) => row.session).filter((session) => sessionSelectionScope(session) === "current");
     const archivedSessions = archivedRows.map((row) => row.session);
-    if (!this.collapsed) tree.descendantCounts ??= unarchivedDescendantCounts(this.sessions);
+    if (!this.collapsed) tree.descendantCounts ??= sessionDescendantCounts(this.sessions);
     const descendantCounts = tree.descendantCounts;
     const allDescendantCounts = this.collapsed ? undefined : sessionDescendantCounts(this.sessions, () => true);
     const workingSubagents = this.collapsed ? undefined : activeSubagentCounts(this.sessions, this.statuses, this.activities, this.sending);
@@ -321,7 +323,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
 
   private renderSession(row: SessionRow, descendantCount: number, scope: SessionSelectionScope, allDescendantCount: number, workingSubagents: number) {
     const { session } = row;
-    const subagentsHidden = this.hiddenSubagentParents.has(subagentParentKey(session));
+    const subagentsHidden = this.hiddenSubagentParents.has(this.subagentKey(session));
     const cappedDepth = Math.min(row.depth, 2);
     const canBulkSelect = sessionSelectionScope(session) === scope;
     const selectionActive = this.selectionScopes.has(scope);
@@ -399,13 +401,25 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     return html`<span class="row-badges">${row.depth > 2 ? html`<span class="badge">depth ${row.depth}</span>` : null}${hiddenCount > 0 ? html`<span class="badge hidden-subagents" title=${`${String(hiddenCount)} subagents hidden; execution is unchanged`}>${hiddenCount} hidden</span>` : null}</span>`;
   }
 
+  private subagentKey(session: SessionInfo): string {
+    let key = this.subagentKeys.get(session);
+    if (key === undefined) {
+      key = subagentParentKey(session);
+      this.subagentKeys.set(session, key);
+    }
+    return key;
+  }
+
   private visibleSessionIds(): ReadonlySet<string> {
-    return new Set(sessionRows(this.sessions, this.hiddenSubagentParents).map((row) => row.session.id));
+    if (this.visibleCache?.sessions === this.sessions && this.visibleCache.hidden === this.hiddenSubagentParents) return this.visibleCache.ids;
+    const ids = new Set(sessionRows(this.sessions, this.hiddenSubagentParents).map((row) => row.session.id));
+    this.visibleCache = { sessions: this.sessions, hidden: this.hiddenSubagentParents, ids };
+    return ids;
   }
 
   private toggleSubagents(session: SessionInfo, target: EventTarget | null): void {
     const next = new Set(this.hiddenSubagentParents);
-    const key = subagentParentKey(session);
+    const key = this.subagentKey(session);
     if (next.has(key)) next.delete(key);
     else next.add(key);
     this.hiddenSubagentParents = next;
@@ -603,30 +617,40 @@ function removeSessionIds(sessionIds: ReadonlySet<string>, removedIds: readonly 
   return new Set([...sessionIds].filter((sessionId) => !removed.has(sessionId)));
 }
 
-function sessionDescendantCounts(sessions: SessionInfo[], include: (session: SessionInfo) => boolean = (session) => session.archived !== true): Map<string, number> {
-  const childrenByParentPath = new Map<string, SessionInfo[]>();
-  for (const session of sessions) {
-    if (session.parentSessionPath === undefined) continue;
-    const parentKey = normalizeSessionPath(session.parentSessionPath);
-    const children = childrenByParentPath.get(parentKey) ?? [];
-    children.push(session);
-    childrenByParentPath.set(parentKey, children);
-  }
+// Session records are replaced as a single array on refresh. Cache path normalization
+// for that array while recomputing active/unread counts from the latest live state.
+const descendantGraphs = new WeakMap<SessionInfo[], { children: Map<string, SessionInfo[]>; paths: Map<SessionInfo, string> }>();
 
+function sessionDescendantCounts(sessions: SessionInfo[], include: (session: SessionInfo) => boolean = (session) => session.archived !== true): Map<string, number> {
+  let graph = descendantGraphs.get(sessions);
+  if (graph === undefined) {
+    const children = new Map<string, SessionInfo[]>();
+    const paths = new Map<SessionInfo, string>();
+    for (const session of sessions) {
+      paths.set(session, normalizeSessionPath(session.path));
+      if (session.parentSessionPath === undefined) continue;
+      const parentKey = normalizeSessionPath(session.parentSessionPath);
+      const siblings = children.get(parentKey) ?? [];
+      siblings.push(session);
+      children.set(parentKey, siblings);
+    }
+    graph = { children, paths };
+    descendantGraphs.set(sessions, graph);
+  }
+  const { children, paths } = graph;
   const countFor = (session: SessionInfo, seenPaths: Set<string>): number => {
-    const sessionKey = normalizeSessionPath(session.path);
+    const sessionKey = paths.get(session) ?? "";
     if (seenPaths.has(sessionKey)) return 0;
     const nextSeenPaths = new Set(seenPaths);
     nextSeenPaths.add(sessionKey);
     let count = 0;
-    for (const child of childrenByParentPath.get(sessionKey) ?? []) {
-      if (nextSeenPaths.has(normalizeSessionPath(child.path))) continue;
+    for (const child of children.get(sessionKey) ?? []) {
+      if (nextSeenPaths.has(paths.get(child) ?? "")) continue;
       if (include(child)) count += 1;
       count += countFor(child, nextSeenPaths);
     }
     return count;
   };
-
   return new Map(sessions.map((session) => [session.id, countFor(session, new Set())]));
 }
 

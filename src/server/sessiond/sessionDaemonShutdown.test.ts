@@ -95,6 +95,7 @@ describe("session daemon shutdown", () => {
         auth: { dispose: () => undefined },
         sessions: { dispose: () => undefined },
         unreadStore: { flush: () => undefined },
+        pushSubscriptions: { flush: () => undefined },
         pluginBackends: {
           closeAll: () => {
             drainStarted.resolve();

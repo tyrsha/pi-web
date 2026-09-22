@@ -239,9 +239,10 @@ export class AppNavigationPanel extends LitElement {
     return this.machineStatusSnapshots[selectedMachineId({ selectedMachine: this.selectedMachine })];
   }
 
+  private readonly fallbackProjectListMachine: PluginMachine = { id: "local", name: "local", kind: "local" };
+
   private projectListMachine(): PluginMachine {
-    const machine = this.selectedMachine;
-    return machine === undefined ? { id: "local", name: "local", kind: "local" } : { id: machine.id, name: machine.name, kind: machine.kind };
+    return this.selectedMachine ?? this.fallbackProjectListMachine;
   }
 
   private async focusNavigableSection(section: KeyboardNavigableSection | undefined): Promise<boolean> {

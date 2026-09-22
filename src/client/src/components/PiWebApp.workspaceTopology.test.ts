@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionController } from "../controllers/sessionController";
 import { RealtimeSocket } from "../sessionSocket";
 import { WorkspaceController } from "../controllers/workspaceController";
-import { RealtimeSocket } from "../sessionSocket";
 import { PiWebApp } from "./PiWebApp";
 
 type RefreshCallback = () => void | Promise<void>;

@@ -9,7 +9,6 @@ import { MachineSwitcher } from "../MachineSwitcher";
 import { ProjectList } from "../ProjectList";
 import { SessionList } from "../SessionList";
 import { WorkspaceList } from "../WorkspaceList";
-import { SessionList } from "../SessionList";
 import { AppNavigationPanel, shouldShowMachinesSection } from "./AppNavigationPanel";
 
 afterEach(() => {
@@ -115,7 +114,7 @@ describe("stable list inputs", () => {
     panel.locationIndicator = true;
     await settle();
     expect(panelRender).toHaveBeenCalledOnce();
-    for (const render of renders) expect(render).not.toHaveBeenCalled();
+    for (const [index, render] of renders.entries()) expect(render, lists[index]?.tagName).not.toHaveBeenCalled();
 
     const selectProject = vi.fn();
     const selectWorkspace = vi.fn();

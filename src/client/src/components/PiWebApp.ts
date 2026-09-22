@@ -577,40 +577,43 @@ export class PiWebApp extends LitElement {
 
   private async loadProjectsAndRestoreRoute() {
     this.recordResumeDiagnostic("boot.start");
+    let failed = false;
     try {
       this.restoreSettingsRoute();
-    const route = readRoute();
-    if (!await this.machines.loadMachines(route.machineId)) {
-      this.setContentError(route, this.state.error);
-      return;
-    }
-    if (!this.routeLocationMatchesUrl(route)) {
-      await this.projects.loadProjects();
-      await this.withChatScrollTransition(async () => { await this.restoreRoute(false); });
+      const route = readRoute();
+      if (!await this.machines.loadMachines(route.machineId)) {
+        this.setContentError(route, this.state.error);
+        return;
+      }
+      if (!this.routeLocationMatchesUrl(route)) {
+        await this.projects.loadProjects();
+        await this.withChatScrollTransition(async () => { await this.restoreRoute(false); });
+        await this.refreshWorkspaceDeletionRuns();
+        return;
+      }
+      const initialRouteMachineHealth = this.state.machineStatuses[route.machineId ?? "local"];
+      // An unavailable machine must not turn its requested hierarchy into a local route.
+      if (selectedMachineId(this.state) === (route.machineId ?? "local")) await this.projects.loadProjects();
+      // Project loading can outlive the initial URL capture; only hand the fixed
+      // route to reconciliation while it is still the current destination.
+      if (!this.routeLocationMatchesUrl(route)) {
+        await this.withChatScrollTransition(async () => { await this.restoreRoute(false); });
+        await this.refreshWorkspaceDeletionRuns();
+        return;
+      }
+      await this.withChatScrollTransition(() => this.restoreRouteFor(route, false));
+      if (this.shouldDeferRemoteRouteRestore(route, initialRouteMachineHealth)) this.deferRemoteRouteRestore(route);
+      else {
+        this.clearPendingRemoteRouteRestore();
+        this.rememberCurrentMachineNavigation();
+      }
       await this.refreshWorkspaceDeletionRuns();
-      return;
-    }
-    const initialRouteMachineHealth = this.state.machineStatuses[route.machineId ?? "local"];
-    // An unavailable machine must not turn its requested hierarchy into a local route.
-    if (selectedMachineId(this.state) === (route.machineId ?? "local")) await this.projects.loadProjects();
-    // Project loading can outlive the initial URL capture; only hand the fixed
-    // route to reconciliation while it is still the current destination.
-    if (!this.routeLocationMatchesUrl(route)) {
-      await this.withChatScrollTransition(async () => { await this.restoreRoute(false); });
-      await this.refreshWorkspaceDeletionRuns();
-      return;
-    }
-    await this.withChatScrollTransition(() => this.restoreRouteFor(route, false));
-    if (this.shouldDeferRemoteRouteRestore(route, initialRouteMachineHealth)) this.deferRemoteRouteRestore(route);
-    else {
-      this.clearPendingRemoteRouteRestore();
-      this.rememberCurrentMachineNavigation();
-    }
-    await this.refreshWorkspaceDeletionRuns();
-    this.recordResumeDiagnostic("boot.complete");
     } catch (error) {
+      failed = true;
       this.recordResumeDiagnostic("boot.failed");
       throw error;
+    } finally {
+      if (!failed) this.recordResumeDiagnostic("boot.complete");
     }
   }
 
