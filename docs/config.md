@@ -447,6 +447,12 @@ pi-web plugins safe-start clear --restart
 
 Ordinary import/activation/start/health failures are quarantined when possible, but server plugins are trusted in-process code, share sessiond's event loop, and are not crash-isolated. `bundled-only` bypasses external plugin failures; `none` is the emergency level that also bypasses bundled server plugins. Setting, clearing, or disabling takes effect for server code only after sessiond restarts, and that restart may interrupt active sessions/runtime ownership.
 
+### Browser navigation preferences
+
+On screens at most 760px wide, navigation tabs show icons (or fallback initials) without visible names by default. Open **Navigation** and choose **Mobile tab labels → Shown** to show names, or **Hidden** to save space again. The tab names remain available to assistive technology in either mode. At wider widths, tab names remain visible regardless of this preference.
+
+This choice is saved in the current browser’s local storage, takes effect immediately, and needs no service restart. It is not a key in PI WEB’s global or project config files; another browser has its own choice.
+
 ### Shortcut config
 
 Shortcut values are keyed by action id. Values are shortcut strings such as `mod+k`, `g p`, or `shift+enter`; `null` disables that action's shortcut.

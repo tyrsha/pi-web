@@ -251,7 +251,15 @@
 <td>Send key with a coarse primary pointer or viewport ≤760px.</td>
 <td>Settings save / config refresh</td>
 </tr>
+<tr>
+<th scope="row"><span id="mobile-tab-labels" class="reference-anchor"></span>Mobile tab labels<br><small>Browser preference, not a config key</small></th>
+<td>Current browser</td>
+<td>Hidden at ≤760px</td>
+<td>Open Navigation → Mobile tab labels → Shown or Hidden. Names remain accessible to assistive technology; wider layouts still show names.</td>
+<td>Immediate; no service restart</td>
+</tr>
 </tbody></table></div>
+<p>Mobile tab labels are saved in this browser’s local storage, not the global or project config file. Another browser has its own choice. <a href="config.md#browser-navigation-preferences">Browser navigation preferences →</a></p>
 <details class="config-details"><summary>Default selection and shortcut rules</summary><ul><li>Model/thinking stars change new-session defaults, not the current session. Resumed sessions keep saved choices.</li><li>Project Pi settings, explicit startup choices, and per-model thinking settings can override defaults. If the default model is disabled, startup falls back to the first enabled model.</li><li><code>mod</code> means Ctrl or ⌘. App shortcuts support sequences; composer send bindings support one combination only.</li><li>Unassigned Enter/Shift+Enter insert newlines; Enter accepts a selected completion first. <code>null</code> disables keyboard submission, not the send button.</li><li>Existing browser-local Enter preferences remain the fallback until a composer binding is configured. Reset restores that fallback.</li></ul><p><a href="config.md#shortcut-config">Full shortcut matching rules →</a></p></details>
 <h3 id="prompt-completions">Composer shortcuts (not config keys)</h3>
 <div class="table-scroll" role="region" aria-label="Completion triggers" tabindex="0">
