@@ -11,7 +11,7 @@ export class NavigationDialog extends LitElement {
   @property({ attribute: false }) tabs: AppMobileMainTab[] = [];
   // Layout/search visibility must not narrow implicit-all pin edits.
   @property({ attribute: false }) pinUniverse?: readonly string[];
-  @property({ attribute: false }) preferences: NavigationPreferences = { pinnedIds: [], mobileCollapsed: false };
+  @property({ attribute: false }) preferences: NavigationPreferences = { pinnedIds: [], mobileCollapsed: false, showMobileTabLabels: false };
   @property({ attribute: false }) selectedTab?: AppMobileMainTab["id"];
   @property({ attribute: false }) onSelect?: (id: AppMobileMainTab["id"]) => void;
   @property({ attribute: false }) onPreferencesChange?: (preferences: NavigationPreferences) => void;
@@ -79,6 +79,17 @@ export class NavigationDialog extends LitElement {
               <button type="button" aria-pressed=${String(this.preferences.mobileCollapsed)} @click=${() => {
                 this.onPreferencesChange?.({ ...this.preferences, mobileCollapsed: true });
               }}>Collapsed</button>
+            </div>
+          </div>
+          <div class="mobile-navigation" role="group" aria-label="Mobile tab labels">
+            <span>Mobile tab labels</span>
+            <div class="toggle-options">
+              <button type="button" aria-pressed=${String(!this.preferences.showMobileTabLabels)} @click=${() => {
+                this.onPreferencesChange?.({ ...this.preferences, showMobileTabLabels: false });
+              }}>Hidden</button>
+              <button type="button" aria-pressed=${String(this.preferences.showMobileTabLabels)} @click=${() => {
+                this.onPreferencesChange?.({ ...this.preferences, showMobileTabLabels: true });
+              }}>Shown</button>
             </div>
           </div>
         </footer>

@@ -1,6 +1,7 @@
 export interface NavigationPreferences {
   pinnedIds: string[];
   mobileCollapsed: boolean;
+  showMobileTabLabels: boolean;
 }
 
 const storageKey = "pi-web:navigation-preferences";
@@ -21,12 +22,13 @@ export function loadNavigationPreferences(storage: Pick<Storage, "getItem"> | un
       return {
         pinnedIds: Array.isArray(pins) ? [...new Set(pins.filter((id): id is string => typeof id === "string" && id.length > 0))] : [],
         mobileCollapsed: "mobileCollapsed" in value && value.mobileCollapsed === true,
+        showMobileTabLabels: "showMobileTabLabels" in value && value.showMobileTabLabels === true,
       };
     }
   } catch {
     // Layout preferences are optional when storage is blocked or malformed.
   }
-  return { pinnedIds: [], mobileCollapsed: false };
+  return { pinnedIds: [], mobileCollapsed: false, showMobileTabLabels: false };
 }
 
 export function saveNavigationPreferences(preferences: NavigationPreferences, storage: Pick<Storage, "setItem"> | undefined = browserStorage()): void {
