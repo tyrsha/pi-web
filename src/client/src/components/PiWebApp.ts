@@ -3388,6 +3388,7 @@ export class PiWebApp extends LitElement {
     return html`
       <app-mobile-main-tabs
         .tabs=${pinnedTabs}
+        .showMobileTabLabels=${this.navigationPreferences.showMobileTabLabels}
         .hiddenActiveDestination=${availableTabs.some((tab) => tab.id === selectedTab) && !pinnedTabs.some((tab) => tab.id === selectedTab)}
         .onShowNavigation=${this.showNavigation}
         .selectedTab=${selectedTab}

@@ -17,6 +17,7 @@ import { ProjectList } from "./ProjectList";
 import { SessionList } from "./SessionList";
 import { loadNavigationPreferences, saveNavigationPreferences } from "../navigationPreferences";
 import { NavigationDialog } from "./appShell/NavigationDialog";
+import type { AppMobileMainTabs } from "./appShell/AppMobileMainTabs";
 import { deepActiveElement } from "./modalLayerRegistry";
 import { AppShellController } from "../appShell/appShellController";
 
@@ -134,7 +135,7 @@ describe("application rendering boundaries", () => {
     { mobile: false, desktop: false, view: "navigation", pins: ["chat"], selected: false },
     { mobile: false, desktop: true, view: "chat", pins: ["navigation"], selected: false },
   ] as const)("highlights only available hidden mobile destinations: %j", async ({ mobile, desktop, view, pins, selected }) => {
-    saveNavigationPreferences({ pinnedIds: [...pins], mobileCollapsed: false });
+    saveNavigationPreferences({ pinnedIds: [...pins], mobileCollapsed: false, showMobileTabLabels: false });
     const app = await mountApp({ mainView: view });
     const shell: unknown = Reflect.get(app, "appShell");
     if (!(shell instanceof AppShellController)) throw new Error("Expected shell controller");
@@ -152,7 +153,7 @@ describe("application rendering boundaries", () => {
     { desktop: false, collapsed: false },
     { desktop: false, collapsed: true },
   ])("does not select or highlight a fallback for unavailable destinations: %j", async ({ desktop, collapsed }) => {
-    saveNavigationPreferences({ pinnedIds: ["chat"], mobileCollapsed: collapsed });
+    saveNavigationPreferences({ pinnedIds: ["chat"], mobileCollapsed: collapsed, showMobileTabLabels: false });
     const app = await mountApp({ selectedWorkspace: workspace, workspaces: [workspace], mainView: "workspace", workspaceTool: "render-test:panel" }, () => html`<p>Remembered content</p>`);
     const shell: unknown = Reflect.get(app, "appShell");
     if (!(shell instanceof AppShellController)) throw new Error("Expected shell controller");
@@ -182,7 +183,7 @@ describe("application rendering boundaries", () => {
   });
 
   it.each(["chat", "workspace"] as const)("collapsed mobile navigation selects the visible destination, not the remembered tool: %s", async (mainView) => {
-    saveNavigationPreferences({ pinnedIds: ["chat"], mobileCollapsed: true });
+    saveNavigationPreferences({ pinnedIds: ["chat"], mobileCollapsed: true, showMobileTabLabels: false });
     const app = await mountApp({ selectedWorkspace: workspace, workspaces: [workspace], mainView, workspaceTool: "render-test:panel" }, () => html`<p>Tool content</p>`);
     const shell: unknown = Reflect.get(app, "appShell");
     if (!(shell instanceof AppShellController)) throw new Error("Expected shell controller");
@@ -277,8 +278,29 @@ describe("application rendering boundaries", () => {
     expect(Reflect.get(reloaded, "navigationPreferences")).toEqual(loadNavigationPreferences());
   });
 
+  it("saves mobile tab labels from Navigation and restores the choice after reload", async () => {
+    const app = await mountApp({});
+    await settle(app);
+    const tabs = app.shadowRoot?.querySelector<AppMobileMainTabs>("app-mobile-main-tabs");
+    expect(tabs?.showMobileTabLabels).toBe(false);
+    expect(tabs?.shadowRoot?.querySelector(".mobile-tabs-frame")?.classList.contains("hide-mobile-labels")).toBe(true);
+    expect(tabs?.shadowRoot?.querySelector('button[title="Chat"]')?.getAttribute("aria-label")).toBe("Chat");
+    tabs?.shadowRoot?.querySelector<HTMLButtonElement>('button[aria-label="Navigation"]')?.click();
+    await settle(app);
+    const dialog = app.shadowRoot?.querySelector<NavigationDialog>("navigation-dialog");
+    dialog?.shadowRoot?.querySelector<HTMLButtonElement>('.mobile-navigation[aria-label="Mobile tab labels"] button:last-child')?.click();
+    await settle(app);
+    expect(tabs?.showMobileTabLabels).toBe(true);
+    expect(tabs?.shadowRoot?.querySelector(".mobile-tabs-frame")?.classList.contains("hide-mobile-labels")).toBe(false);
+    expect(loadNavigationPreferences().showMobileTabLabels).toBe(true);
+    document.body.replaceChildren();
+    const reloaded = await mountApp({});
+    await settle(reloaded);
+    expect(reloaded.shadowRoot?.querySelector<AppMobileMainTabs>("app-mobile-main-tabs")?.showMobileTabLabels).toBe(true);
+  });
+
   it("collapses only the mobile tab bar, keeping breadcrumbs and separate Navigation and Actions controls", async () => {
-    saveNavigationPreferences({ pinnedIds: [], mobileCollapsed: true });
+    saveNavigationPreferences({ pinnedIds: [], mobileCollapsed: true, showMobileTabLabels: false });
     const app = await mountApp({});
     const shell: unknown = Reflect.get(app, "appShell");
     if (!(shell instanceof AppShellController)) throw new Error("Expected shell controller");
@@ -312,10 +334,10 @@ describe("application rendering boundaries", () => {
     await settle(app);
     const reopenedDialog = app.shadowRoot?.querySelector("navigation-dialog");
     expect(reopenedDialog).not.toBeNull();
-    expect(loadNavigationPreferences()).toEqual({ pinnedIds: [], mobileCollapsed: false });
+    expect(loadNavigationPreferences()).toEqual({ pinnedIds: [], mobileCollapsed: false, showMobileTabLabels: false });
 
     // A resize must invalidate the guarded tab surface even with collapse enabled.
-    reopenedDialog?.shadowRoot?.querySelector<HTMLButtonElement>(".mobile-navigation button:last-child")?.click();
+    reopenedDialog?.shadowRoot?.querySelector<HTMLButtonElement>('.mobile-navigation[aria-label="Mobile navigation"] button:last-child')?.click();
     await settle(app);
     shell.isMobileNavigationLayout = false;
     app.requestUpdate();

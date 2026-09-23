@@ -43,7 +43,7 @@ it("focuses search, supports button navigation and traps Tab, then restores focu
   expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
   input?.focus();
   expect(key("Tab", true).defaultPrevented).toBe(true);
-  expect(deepActiveElement(document)?.textContent).toBe("Collapsed");
+  expect(deepActiveElement(document)?.textContent).toBe("Shown");
   expect(key("Tab").defaultPrevented).toBe(true);
   expect(deepActiveElement(document)).toBe(input);
   const composingEscape = new KeyboardEvent("keydown", { key: "Escape", isComposing: true, bubbles: true, composed: true, cancelable: true });
@@ -112,7 +112,7 @@ it("filters destinations and navigates results from search without changing pins
 it("offers unpinned destinations and closes after navigating without modifying pins", async () => {
   const dialog = new NavigationDialog();
   dialog.tabs = [{ id: "chat", label: "Chat" }, { id: "tools:files", label: "Files" }];
-  dialog.preferences = { pinnedIds: ["chat", "missing:tool"], mobileCollapsed: true };
+  dialog.preferences = { pinnedIds: ["chat", "missing:tool"], mobileCollapsed: true, showMobileTabLabels: false };
   dialog.selectedTab = "tools:files";
   dialog.onSelect = vi.fn();
   dialog.onClose = vi.fn();
@@ -133,26 +133,32 @@ it("offers unpinned destinations and closes after navigating without modifying p
 it("toggles icon pins and mobile layout independently, resets tabs, and uses shared Escape handling", async () => {
   const dialog = new NavigationDialog();
   dialog.tabs = [{ id: "chat", label: "Chat" }, { id: "tools:files", label: "Files" }];
-  dialog.preferences = { pinnedIds: ["chat", "missing:tool"], mobileCollapsed: true };
+  dialog.preferences = { pinnedIds: ["chat", "missing:tool"], mobileCollapsed: true, showMobileTabLabels: false };
   dialog.onPreferencesChange = (preferences) => { dialog.preferences = preferences; };
   dialog.onClose = vi.fn();
   document.body.append(dialog);
   await dialog.updateComplete;
   dialog.shadowRoot?.querySelector<HTMLButtonElement>('button[aria-label="Pin Files"]')?.click();
   await dialog.updateComplete;
-  expect(dialog.preferences).toEqual({ pinnedIds: ["chat", "missing:tool", "tools:files"], mobileCollapsed: true });
+  expect(dialog.preferences).toEqual({ pinnedIds: ["chat", "missing:tool", "tools:files"], mobileCollapsed: true, showMobileTabLabels: false });
   expect(dialog.shadowRoot?.querySelector('button[aria-label="Pin Files"]')?.getAttribute("aria-pressed")).toBe("true");
-  const modes = [...dialog.shadowRoot?.querySelectorAll<HTMLButtonElement>('.mobile-navigation button') ?? []];
+  const modes = [...dialog.shadowRoot?.querySelectorAll<HTMLButtonElement>('.mobile-navigation[aria-label="Mobile navigation"] button') ?? []];
   expect(modes.map((button) => button.getAttribute("aria-pressed"))).toEqual(["false", "true"]);
   modes[0]?.click();
   await dialog.updateComplete;
-  expect(dialog.preferences).toEqual({ pinnedIds: ["chat", "missing:tool", "tools:files"], mobileCollapsed: false });
+  expect(dialog.preferences).toEqual({ pinnedIds: ["chat", "missing:tool", "tools:files"], mobileCollapsed: false, showMobileTabLabels: false });
   expect(modes.map((button) => button.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
   modes[1]?.click();
   await dialog.updateComplete;
+  const labels = [...dialog.shadowRoot?.querySelectorAll<HTMLButtonElement>('.mobile-navigation[aria-label="Mobile tab labels"] button') ?? []];
+  expect(labels.map((button) => button.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
+  labels[1]?.click();
+  await dialog.updateComplete;
+  expect(dialog.preferences).toEqual({ pinnedIds: ["chat", "missing:tool", "tools:files"], mobileCollapsed: true, showMobileTabLabels: true });
+  expect(labels.map((button) => button.getAttribute("aria-pressed"))).toEqual(["false", "true"]);
   dialog.shadowRoot?.querySelector<HTMLButtonElement>("footer button")?.click();
   await dialog.updateComplete;
-  expect(dialog.preferences).toEqual({ pinnedIds: [], mobileCollapsed: true });
+  expect(dialog.preferences).toEqual({ pinnedIds: [], mobileCollapsed: true, showMobileTabLabels: true });
   expect([...dialog.shadowRoot?.querySelectorAll(".pin-button") ?? []].every((button) => button.getAttribute("aria-pressed") === "true")).toBe(true);
   expect(dialog.shadowRoot?.querySelector('input[type="checkbox"]')).toBeNull();
   const surface = dialog.shadowRoot?.querySelector<ModalSurface>("modal-surface");

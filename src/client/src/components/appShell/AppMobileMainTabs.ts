@@ -23,6 +23,7 @@ export class AppMobileMainTabs extends LitElement {
   @property({ attribute: false }) tabs: AppMobileMainTab[] = [];
   @property({ attribute: false }) onShowNavigation?: () => void;
   @property({ type: Boolean }) hiddenActiveDestination = false;
+  @property({ type: Boolean }) showMobileTabLabels = false;
   @property({ attribute: false }) selectedTab: AppMobileMainTabId | undefined = "chat";
   @property({ attribute: false }) onSelect?: (tab: AppMobileMainTabId) => void;
   @query(".mobile-tabs") private mobileTabs?: HTMLElement | null;
@@ -70,7 +71,7 @@ export class AppMobileMainTabs extends LitElement {
   }
 
   private frameClass(): string {
-    return `mobile-tabs-frame${this.canScrollLeft ? " can-scroll-left" : ""}${this.canScrollRight ? " can-scroll-right" : ""}`;
+    return `mobile-tabs-frame${this.canScrollLeft ? " can-scroll-left" : ""}${this.canScrollRight ? " can-scroll-right" : ""}${this.showMobileTabLabels ? "" : " hide-mobile-labels"}`;
   }
 
   private tabClass(tab: AppMobileMainTab): string {
@@ -178,6 +179,7 @@ export class AppMobileMainTabs extends LitElement {
       .mobile-tabs-frame button { min-width: 44px; height: 44px; justify-content: center; gap: 4px; padding: 0 8px; }
       .mobile-tabs .navigation-tab { display: inline-flex; }
       .tab-fallback { display: inline-block; }
+      .hide-mobile-labels .tab-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
       .tab-badge { min-width: 13px; padding: 0 4px; font-size: 10px; line-height: 13px; }
     }
   `;

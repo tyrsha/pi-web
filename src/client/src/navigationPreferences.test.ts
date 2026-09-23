@@ -25,22 +25,23 @@ describe("navigation preferences", () => {
     expect(pins).toEqual(["missing:tool"]);
   });
 
-  it("round-trips pins independently from mobile collapse", () => {
+  it("round-trips pins, collapse, and mobile labels independently", () => {
     const values = new Map<string, string>();
     const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
-    const preferences = { pinnedIds: ["missing:tool"], mobileCollapsed: true };
+    const preferences = { pinnedIds: ["missing:tool"], mobileCollapsed: true, showMobileTabLabels: true };
     saveNavigationPreferences(preferences, storage);
     expect(loadNavigationPreferences(storage)).toEqual(preferences);
-    saveNavigationPreferences({ ...preferences, mobileCollapsed: false }, storage);
-    expect(loadNavigationPreferences(storage)).toEqual({ ...preferences, mobileCollapsed: false });
+    saveNavigationPreferences({ ...preferences, mobileCollapsed: false, showMobileTabLabels: false }, storage);
+    expect(loadNavigationPreferences(storage)).toEqual({ ...preferences, mobileCollapsed: false, showMobileTabLabels: false });
   });
 
-  it("defaults safely for malformed or unavailable storage and validates stored values", () => {
+  it("defaults safely for old, malformed or unavailable storage and validates stored values", () => {
     const storage = (raw: string) => ({ getItem: () => raw });
-    expect(loadNavigationPreferences(storage("{"))).toEqual({ pinnedIds: [], mobileCollapsed: false });
-    expect(loadNavigationPreferences(storage('{"pinnedIds":["chat",5,"chat",""],"mobileCollapsed":"true"}'))).toEqual({ pinnedIds: ["chat"], mobileCollapsed: false });
+    expect(loadNavigationPreferences(storage("{"))).toEqual({ pinnedIds: [], mobileCollapsed: false, showMobileTabLabels: false });
+    expect(loadNavigationPreferences(storage('{"pinnedIds":["chat",5,"chat",""],"mobileCollapsed":"true","showMobileTabLabels":"true"}'))).toEqual({ pinnedIds: ["chat"], mobileCollapsed: false, showMobileTabLabels: false });
+    expect(loadNavigationPreferences(storage('{"pinnedIds":["chat"],"mobileCollapsed":true}'))).toEqual({ pinnedIds: ["chat"], mobileCollapsed: true, showMobileTabLabels: false });
     const blocked = { getItem: () => { throw new Error("Blocked"); }, setItem: () => { throw new Error("Blocked"); } };
-    expect(loadNavigationPreferences(blocked)).toEqual({ pinnedIds: [], mobileCollapsed: false });
-    expect(() => { saveNavigationPreferences({ pinnedIds: [], mobileCollapsed: true }, blocked); }).not.toThrow();
+    expect(loadNavigationPreferences(blocked)).toEqual({ pinnedIds: [], mobileCollapsed: false, showMobileTabLabels: false });
+    expect(() => { saveNavigationPreferences({ pinnedIds: [], mobileCollapsed: true, showMobileTabLabels: false }, blocked); }).not.toThrow();
   });
 });
